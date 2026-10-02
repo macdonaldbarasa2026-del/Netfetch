@@ -1,0 +1,39 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Outer Glow Wave -->
+    <path
+        android:fillColor="#00E5FF"
+        android:fillAlpha="0.15"
+        android:pathData="M54,18 C73.88,18 90,34.12 90,54 C90,73.88 73.88,90 54,90 C34.12,90 18,73.88 18,54 C18,34.12 34.12,18 54,18 Z" />
+
+    <!-- Outer Wi-Fi Arc -->
+    <path
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M 30,42 A 32,32 0 0,1 78,42" />
+
+    <!-- Middle Wi-Fi Arc -->
+    <path
+        android:strokeColor="#00B0FF"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M 38,50 A 21,21 0 0,1 70,50" />
+
+    <!-- Inner Wi-Fi Arc -->
+    <path
+        android:strokeColor="#00897B"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M 46,58 A 11,11 0 0,1 62,58" />
+
+    <!-- Center Pulse Node (Fetch Arrow) -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M54,66 C57.31,66 60,68.69 60,72 C60,75.31 57.31,78 54,78 C50.69,78 48,75.31 48,72 C48,68.69 50.69,66 54,66 Z" />
+
+</vector>

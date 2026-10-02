@@ -1,0 +1,202 @@
+package com.netfetch.app.ui.screens
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.netfetch.app.model.ClientDevice
+import com.netfetch.app.ui.theme.*
+import java.text.SimpleDateFormat
+import java.util.*
+
+@Composable
+fun DevicesScreen(
+    connectedClients: List<ClientDevice>
+) {
+    val context = LocalContext.current
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(CreamBackground)
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    text = "Connected Devices",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = PrimaryBlack
+                )
+                Text(
+                    text = "Real-time client connections & traffic monitor",
+                    fontSize = 12.sp,
+                    color = TextMuted
+                )
+            }
+
+            Surface(
+                shape = CircleShape,
+                color = PrimaryBlack,
+                contentColor = CardWhite
+            ) {
+                Text(
+                    text = "${connectedClients.size}",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        if (connectedClients.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(32.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        imageVector = Icons.Default.DevicesOther,
+                        contentDescription = null,
+                        tint = TextMuted,
+                        modifier = Modifier.size(64.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "No Devices Connected Yet",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = TextDark
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Connect client devices to the NetFetch Wi-Fi network and set proxy to 192.168.49.1:8282.",
+                        fontSize = 13.sp,
+                        color = TextMuted,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            }
+        } else {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(connectedClients) { client ->
+                    ClientDeviceCard(client = client, context = context)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ClientDeviceCard(client: ClientDevice, context: Context) {
+    val sdf = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+    val connectedTimeStr = sdf.format(Date(client.connectedTimestamp))
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = CardWhite),
+        border = BorderStroke(1.dp, SurfaceBorder),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .background(CreamBackground, shape = CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Laptop,
+                    contentDescription = null,
+                    tint = PrimaryBlack,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = client.deviceName,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TextDark
+                )
+                Text(
+                    text = "IP: ${client.ipAddress}",
+                    fontSize = 13.sp,
+                    color = PrimaryBlack,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "Connected since $connectedTimeStr",
+                    fontSize = 11.sp,
+                    color = TextMuted
+                )
+            }
+
+            Column(horizontalAlignment = Alignment.End) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = CreamBackground,
+                    border = BorderStroke(1.dp, SurfaceBorder)
+                ) {
+                    Text(
+                        text = client.totalUsageFormatted,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = GreenSuccess,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                IconButton(
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val clip = ClipData.newPlainText("Client IP", client.ipAddress)
+                        clipboard.setPrimaryClip(clip)
+                        Toast.makeText(context, "Copied IP ${client.ipAddress}", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy IP", tint = TextMuted, modifier = Modifier.size(14.dp))
+                }
+            }
+        }
+    }
+}

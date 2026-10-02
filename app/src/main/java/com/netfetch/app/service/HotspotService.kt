@@ -1,0 +1,262 @@
+package com.netfetch.app.service
+
+import android.app.*
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Binder
+import android.os.Build
+import android.os.IBinder
+import android.os.PowerManager
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import com.netfetch.app.R
+import com.netfetch.app.model.BandPreference
+import com.netfetch.app.model.ClientDevice
+import com.netfetch.app.model.HotspotConfig
+import com.netfetch.app.model.HotspotState
+import com.netfetch.app.model.TetherMode
+import com.netfetch.app.network.WifiDirectManager
+import com.netfetch.app.proxy.HttpProxyServer
+import com.netfetch.app.proxy.PacServer
+import com.netfetch.app.proxy.Socks5ProxyServer
+import com.netfetch.app.ui.MainActivity
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+class HotspotService : Service() {
+    private val TAG = "NetFetchService"
+    private val CHANNEL_ID = "netfetch_hotspot_channel"
+    private val NOTIF_ID = 8282
+
+    private val binder = LocalBinder()
+    private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+    private val _hotspotState = MutableStateFlow<HotspotState>(HotspotState.Idle)
+    val hotspotState: StateFlow<HotspotState> = _hotspotState.asStateFlow()
+
+    private var wifiDirectManager: WifiDirectManager? = null
+    private var proxyServer: HttpProxyServer? = null
+    private var socks5Server: Socks5ProxyServer? = null
+    private var pacServer: PacServer? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+
+    private var currentConfig = HotspotConfig()
+    private var activeClients = emptyList<ClientDevice>()
+    private var currentUpSpeed = 0L
+    private var currentDownSpeed = 0L
+
+    inner class LocalBinder : Binder() {
+        fun getService(): HotspotService = this@HotspotService
+    }
+
+    override fun onBind(intent: Intent?): IBinder = binder
+
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+        acquireWakeLock()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val action = intent?.action
+        when (action) {
+            ACTION_START -> {
+                val bandOrdinal = intent.getIntExtra(EXTRA_BAND, BandPreference.AUTO.ordinal)
+                val port = intent.getIntExtra(EXTRA_PORT, 8282)
+                val modeOrdinal = intent.getIntExtra(EXTRA_MODE, TetherMode.NORMAL.ordinal)
+                val band = BandPreference.fromOrdinal(bandOrdinal)
+                val mode = TetherMode.entries.getOrElse(modeOrdinal) { TetherMode.NORMAL }
+
+                currentConfig = currentConfig.copy(bandPreference = band, proxyPort = port, mode = mode)
+                startHotspot(currentConfig)
+            }
+            ACTION_STOP -> {
+                stopHotspot()
+                stopSelf()
+            }
+        }
+        return START_STICKY
+    }
+
+    fun startHotspot(config: HotspotConfig) {
+        currentConfig = config
+        _hotspotState.value = HotspotState.Starting
+        startForegroundServiceNotification("Starting NetFetch Hotspot...")
+
+        // Stop existing proxy instances
+        proxyServer?.stop()
+        socks5Server?.stop()
+        pacServer?.stop()
+
+        // 1. HTTP/HTTPS Proxy Engine
+        proxyServer = HttpProxyServer(
+            port = config.proxyPort,
+            onClientActivity = { clientsMap ->
+                activeClients = clientsMap.values.toList()
+                updateActiveState()
+            },
+            onBandwidthUpdate = { upSpeed, downSpeed, totalBytes ->
+                currentUpSpeed = upSpeed
+                currentDownSpeed = downSpeed
+                updateActiveState()
+                updateNotification()
+            }
+        ).also { it.start() }
+
+        // 2. Pro Mode SOCKS5 Tunneling Engine
+        if (config.mode == TetherMode.PRO) {
+            socks5Server = Socks5ProxyServer(
+                socksPort = config.socksPort,
+                onClientActivity = { clientsMap ->
+                    val combined = (activeClients + clientsMap.values).distinctBy { it.ipAddress }
+                    activeClients = combined
+                    updateActiveState()
+                },
+                onBandwidthUpdate = { _, _, _ -> }
+            ).also { it.start() }
+        }
+
+        // 3. Auto PAC Server
+        pacServer = PacServer(
+            pacPort = config.pacPort,
+            proxyHost = config.hostIp,
+            proxyPort = config.proxyPort
+        ).also { it.start() }
+
+        // 4. Wi-Fi Direct Group Creation
+        wifiDirectManager = WifiDirectManager(
+            context = this,
+            onGroupInfoAvailable = { group, ssid, passphrase ->
+                currentConfig = currentConfig.copy(
+                    ssid = ssid,
+                    passphrase = passphrase
+                )
+                updateActiveState()
+                updateNotification()
+            },
+            onError = { errorMsg ->
+                _hotspotState.value = HotspotState.Error(errorMsg)
+                updateNotification("Error: $errorMsg")
+            }
+        )
+        wifiDirectManager?.startGroup(currentConfig)
+    }
+
+    fun stopHotspot() {
+        wifiDirectManager?.stopGroup()
+        proxyServer?.stop()
+        socks5Server?.stop()
+        pacServer?.stop()
+
+        wifiDirectManager = null
+        proxyServer = null
+        socks5Server = null
+        pacServer = null
+
+        _hotspotState.value = HotspotState.Idle
+        stopForeground(STOP_FOREGROUND_REMOVE)
+    }
+
+    private fun updateActiveState() {
+        _hotspotState.value = HotspotState.Active(
+            config = currentConfig,
+            connectedClients = activeClients,
+            downloadSpeedBps = currentDownSpeed,
+            uploadSpeedBps = currentUpSpeed
+        )
+    }
+
+    private fun startForegroundServiceNotification(title: String) {
+        val notification = buildNotification(title, "Initialising Wi-Fi Direct Network & Proxy Engine...")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                val serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                } else 0
+                startForeground(NOTIF_ID, notification, serviceType)
+            } catch (e: Exception) {
+                startForeground(NOTIF_ID, notification)
+            }
+        } else {
+            startForeground(NOTIF_ID, notification)
+        }
+    }
+
+    private fun updateNotification(customText: String? = null) {
+        val modeStr = if (currentConfig.mode == TetherMode.PRO) "Pro Mode" else "Normal Mode"
+        val text = customText ?: run {
+            val count = activeClients.size
+            val downSpeedKb = currentDownSpeed / 1024
+            val upSpeedKb = currentUpSpeed / 1024
+            "[$modeStr] Connected: $count | ↓ $downSpeedKb KB/s  ↑ $upSpeedKb KB/s"
+        }
+        val notification = buildNotification("NetFetch Active (${currentConfig.ssid})", text)
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.notify(NOTIF_ID, notification)
+    }
+
+    private fun buildNotification(title: String, text: String): Notification {
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val stopIntent = PendingIntent.getService(
+            this,
+            1,
+            Intent(this, HotspotService::class.java).apply { action = ACTION_STOP },
+            PendingIntent.FLAG_IMMUTABLE
+        )
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop Hotspot", stopIntent)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "NetFetch Service",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "NetFetch Wi-Fi Direct Hotspot & Proxy Background Service"
+            }
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun acquireWakeLock() {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NetFetch::HotspotWakeLock").apply {
+            acquire(12 * 60 * 60 * 1000L)
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        stopHotspot()
+        wakeLock?.let { if (it.isHeld) it.release() }
+        serviceScope.cancel()
+    }
+
+    companion object {
+        const val ACTION_START = "com.netfetch.action.START"
+        const val ACTION_STOP = "com.netfetch.action.STOP"
+        const val EXTRA_BAND = "extra_band"
+        const val EXTRA_PORT = "extra_port"
+        const val EXTRA_MODE = "extra_mode"
+    }
+}
