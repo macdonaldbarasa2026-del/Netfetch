@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,22 +27,19 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install Android SDK components
-        uses: android-actions/setup-android@v2
-        with:
-          api-level: 37
-          build-tools: 37.0.0
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
       - name: Print environment
         run: |
-          java -version || true
-          echo "JAVA_HOME=$JAVA_HOME"
-          sdkmanager --version || true
+          java -version
+          sdkmanager --version
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-
-      - name: Accept SDK licenses
-        run: |
-          yes | sdkmanager --licenses || true
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace --info
