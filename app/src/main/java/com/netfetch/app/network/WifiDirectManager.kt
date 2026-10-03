@@ -49,6 +49,14 @@ class WifiDirectManager(
     var currentGroup: WifiP2pGroup? = null
         private set
 
+    @Volatile
+    private var groupStarting = false
+
+    private var groupInfoRetryCount = 0
+
+    private val groupInfoRetryDelaysMs =
+        longArrayOf(500L, 1000L, 2000L, 4000L, 6000L)
+
     init {
         channel = wifiP2pManager?.initialize(context, context.mainLooper, null)
     }
@@ -62,11 +70,30 @@ class WifiDirectManager(
 
         registerReceiver()
 
-        // Remove existing group before creating a new one
-        wifiP2pManager.removeGroup(channel, object : WifiP2pManager.ActionListener {
-            override fun onSuccess() { createNewGroup(config) }
-            override fun onFailure(reason: Int) { createNewGroup(config) }
-        })
+        groupStarting = true
+        groupInfoRetryCount = 0
+        currentGroup = null
+
+        Log.i(
+            TAG,
+            "Starting Wi-Fi Direct group: ssid=${config.ssid} " +
+                "band=${config.bandPreference}"
+        )
+
+        // Remove any previous group before creating the new one.
+        wifiP2pManager.removeGroup(
+            channel,
+            object : WifiP2pManager.ActionListener {
+                override fun onSuccess() {
+                    createNewGroup(config)
+                }
+
+                override fun onFailure(reason: Int) {
+                    // No existing group is also a valid starting condition.
+                    createNewGroup(config)
+                }
+            }
+        )
     }
 
     @SuppressLint("MissingPermission")
@@ -130,18 +157,88 @@ class WifiDirectManager(
 
     @SuppressLint("MissingPermission")
     fun fetchGroupDetails() {
-        wifiP2pManager?.requestGroupInfo(channel) { group ->
+        val manager = wifiP2pManager ?: return
+        val p2pChannel = channel ?: return
+
+        manager.requestGroupInfo(p2pChannel) { group ->
             if (group != null) {
                 currentGroup = group
-                val ssid = group.networkName ?: "DIRECT-NetFetch-AccessPoint"
-                val passphrase = group.passphrase ?: activePassphrase
-                val gateway = detectGatewayAddress(ssid)
-                Log.i(TAG, "Group active - SSID: $ssid, Gateway: $gateway")
-                onGroupInfoAvailable(group, ssid, passphrase, gateway)
+                groupStarting = false
+                groupInfoRetryCount = 0
+
+                val ssid =
+                    group.networkName
+                        ?: "DIRECT-NetFetch-AccessPoint"
+
+                val passphrase =
+                    group.passphrase
+                        ?: activePassphrase
+
+                val gateway =
+                    detectGatewayAddress(ssid)
+
+                Log.i(
+                    TAG,
+                    "Wi-Fi Direct group READY - " +
+                        "SSID=$ssid gateway=$gateway clients=${group.clientList.size}"
+                )
+
+                onGroupInfoAvailable(
+                    group,
+                    ssid,
+                    passphrase,
+                    gateway
+                )
             } else {
-                Log.w(TAG, "Group info returned null — may still be setting up")
+                retryGroupInfo()
             }
         }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun retryGroupInfo() {
+        if (!groupStarting) {
+            Log.d(TAG, "Group info unavailable and group is not starting")
+            return
+        }
+
+        if (groupInfoRetryCount >= groupInfoRetryDelaysMs.size) {
+            Log.e(
+                TAG,
+                "Wi-Fi Direct group was created but group information " +
+                    "could not be obtained"
+            )
+
+            onError(
+                "Wi-Fi Direct started, but NetFetch could not obtain " +
+                    "the hotspot gateway. Please stop and start NetFetch again."
+            )
+            return
+        }
+
+        val delayMs =
+            groupInfoRetryDelaysMs[groupInfoRetryCount]
+
+        groupInfoRetryCount++
+
+        Log.d(
+            TAG,
+            "Group information not ready; retry " +
+                "$groupInfoRetryCount/${groupInfoRetryDelaysMs.size} " +
+                "in ${delayMs}ms"
+        )
+
+        Thread {
+            try {
+                Thread.sleep(delayMs)
+            } catch (_: InterruptedException) {
+                return@Thread
+            }
+
+            if (groupStarting) {
+                fetchGroupDetails()
+            }
+        }.start()
     }
 
     /**
@@ -207,7 +304,10 @@ class WifiDirectManager(
 
     @SuppressLint("MissingPermission")
     fun stopGroup() {
+        groupStarting = false
+        groupInfoRetryCount = 0
         unregisterReceiver()
+
         wifiP2pManager?.removeGroup(channel, object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
                 Log.i(TAG, "Wi-Fi Direct group stopped successfully")
@@ -257,3 +357,7 @@ class WifiDirectManager(
         }
     }
 }
+
+/*
+ * © 2026 Created by MacDonald | Powered by Mixfia
+ */

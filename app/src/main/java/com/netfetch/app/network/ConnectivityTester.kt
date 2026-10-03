@@ -8,71 +8,104 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Performs a real Internet reachability test on a specific upstream Network.
+ * Real Internet validation for a specific Android Network.
  *
- * The request is explicitly opened through the supplied Network so NetFetch
- * never accidentally validates the phone's default network instead of the
- * network currently selected as the upstream.
+ * © 2026 Created by MacDonald | Powered by Mixfia
  */
 object ConnectivityTester {
 
     private const val TAG = "NetFetchConnTest"
 
-    private const val TEST_URL =
-        "http://connectivitycheck.gstatic.com/generate_204"
+    private const val CONNECT_TIMEOUT_MS = 4_000
+    private const val READ_TIMEOUT_MS = 4_000
 
-    private const val CONNECT_TIMEOUT_MS = 5_000
-    private const val READ_TIMEOUT_MS = 5_000
+    private val TEST_URLS = listOf(
+        "https://connectivitycheck.gstatic.com/generate_204",
+        "https://www.google.com/generate_204",
+        "https://cp.cloudflare.com/"
+    )
 
     suspend fun testConnectivity(network: Network?): Boolean =
         withContext(Dispatchers.IO) {
             if (network == null) {
-                Log.w(TAG, "Connectivity test skipped: no upstream network")
+                Log.w(TAG, "No upstream network supplied")
                 return@withContext false
             }
 
-            var connection: HttpURLConnection? = null
+            /*
+             * Android's VALIDATED capability is useful evidence, but we still
+             * perform an actual request through the exact Network selected by
+             * NetFetch.
+             */
+            for (testUrl in TEST_URLS) {
+                if (testUrl == TEST_URLS.first()) {
+                    if (testHttp(network, testUrl, require204 = true)) {
+                        Log.i(TAG, "Internet validated by $testUrl")
+                        return@withContext true
+                    }
+                } else {
+                    if (testHttp(network, testUrl, require204 = false)) {
+                        Log.i(TAG, "Internet validated by $testUrl")
+                        return@withContext true
+                    }
+                }
+            }
 
-            try {
-                val url = URL(TEST_URL)
+            Log.w(TAG, "All Internet validation probes failed: $network")
+            false
+        }
 
-                connection = network.openConnection(url) as HttpURLConnection
+    private fun testHttp(
+        network: Network,
+        address: String,
+        require204: Boolean
+    ): Boolean {
+        var connection: HttpURLConnection? = null
 
-                connection.apply {
-                    requestMethod = "GET"
-                    connectTimeout = CONNECT_TIMEOUT_MS
-                    readTimeout = READ_TIMEOUT_MS
-                    instanceFollowRedirects = false
-                    useCaches = false
-                    setRequestProperty("Connection", "close")
-                    setRequestProperty("Cache-Control", "no-cache")
+        return try {
+            connection =
+                network.openConnection(URL(address)) as HttpURLConnection
+
+            connection.apply {
+                requestMethod = "GET"
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = READ_TIMEOUT_MS
+                instanceFollowRedirects = false
+                useCaches = false
+                doInput = true
+                setRequestProperty("Connection", "close")
+                setRequestProperty("Cache-Control", "no-cache")
+                setRequestProperty("Pragma", "no-cache")
+                setRequestProperty("User-Agent", "NetFetch/1.0")
+            }
+
+            val response = connection.responseCode
+
+            val success =
+                if (require204) {
+                    response == HttpURLConnection.HTTP_NO_CONTENT
+                } else {
+                    response in 200..399
                 }
 
-                val responseCode = connection.responseCode
+            Log.d(
+                TAG,
+                "Probe $address -> HTTP $response success=$success network=$network"
+            )
 
-                /*
-                 * The Google connectivity endpoint is expected to return
-                 * HTTP 204 with an empty body.
-                 *
-                 * Requiring 204 prevents a captive portal or arbitrary HTTP
-                 * 2xx response from being treated as confirmed Internet.
-                 */
-                val result = responseCode == HttpURLConnection.HTTP_NO_CONTENT
-
-                Log.i(
-                    TAG,
-                    "Connectivity test: HTTP $responseCode -> $result (network=$network)"
-                )
-
-                result
-            } catch (e: Exception) {
-                Log.w(
-                    TAG,
-                    "Connectivity test failed on $network: ${e.message}"
-                )
-                false
-            } finally {
-                connection?.disconnect()
-            }
+            success
+        } catch (e: Exception) {
+            Log.d(
+                TAG,
+                "Probe failed $address on $network: ${e.message}"
+            )
+            false
+        } finally {
+            connection?.disconnect()
         }
+    }
 }
+
+/*
+ * © 2026 Created by MacDonald | Powered by Mixfia
+ */

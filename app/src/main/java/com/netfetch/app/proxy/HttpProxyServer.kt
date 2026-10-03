@@ -142,14 +142,69 @@ class HttpProxyServer(
 
     private fun openUpstreamSocket(host: String, port: Int): Socket {
         val upstream = upstreamNetworkProvider()
-            ?: throw java.io.IOException("No validated upstream internet network is available")
+            ?: throw java.io.IOException(
+                "No validated upstream internet network is available"
+            )
 
         return try {
-            val socket = upstream.socketFactory.createSocket()
-            socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
-            socket
+            /*
+             * IMPORTANT:
+             *
+             * Do not resolve the hostname with the phone's default network.
+             * Resolve it through the selected Android Network first.
+             *
+             * Otherwise NetFetch can select Wi-Fi correctly while DNS still
+             * goes through another network and the downstream connection fails.
+             */
+            val addresses = upstream.getAllByName(host)
+
+            if (addresses.isEmpty()) {
+                throw java.net.UnknownHostException(
+                    "No address found for $host"
+                )
+            }
+
+            var lastError: Exception? = null
+
+            for (address in addresses) {
+                try {
+                    val socket = upstream.socketFactory.createSocket()
+
+                    socket.connect(
+                        InetSocketAddress(address, port),
+                        CONNECT_TIMEOUT_MS
+                    )
+
+                    Log.d(
+                        TAG,
+                        "Connected through selected upstream network: " +
+                            "$host/$address:$port"
+                    )
+
+                    return socket
+                } catch (e: Exception) {
+                    lastError = e
+                    Log.d(
+                        TAG,
+                        "Upstream address failed $address:$port: ${e.message}"
+                    )
+                }
+            }
+
+            throw java.io.IOException(
+                "Selected upstream network could not connect to $host:$port",
+                lastError
+            )
         } catch (e: Exception) {
-            Log.w(TAG, "Selected upstream network connection failed for $host:$port: ${e.message}")
+            Log.w(
+                TAG,
+                "Selected upstream connection failed for $host:$port: ${e.message}"
+            )
+
+            if (e is java.io.IOException) {
+                throw e
+            }
+
             throw java.io.IOException(
                 "Selected upstream network could not connect to $host:$port",
                 e

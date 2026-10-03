@@ -296,49 +296,62 @@ class Socks5ProxyServer(
 
     private fun openUpstreamSocket(host: String, port: Int): Socket {
         val upstream = upstreamNetworkProvider()
+            ?: throw java.io.IOException(
+                "No validated upstream internet network is available"
+            )
 
-        if (upstream != null) {
-            val socket = try {
-                upstream.socketFactory.createSocket()
-            } catch (e: Exception) {
-                Log.e(
-                    TAG,
-                    "Unable to create socket on selected upstream network",
-                    e
-                )
-                throw e
-            }
+        /*
+         * Resolve DNS through the selected Android Network. This is critical
+         * when Wi-Fi Direct is the downstream interface and normal Wi-Fi or
+         * cellular is the upstream interface.
+         */
+        val addresses = upstream.getAllByName(host)
+
+        if (addresses.isEmpty()) {
+            throw java.net.UnknownHostException(
+                "No address found for $host"
+            )
+        }
+
+        var lastError: Exception? = null
+
+        for (address in addresses) {
+            var socket: Socket? = null
 
             try {
+                socket = upstream.socketFactory.createSocket()
+
                 socket.connect(
-                    InetSocketAddress(host, port),
+                    InetSocketAddress(address, port),
                     CONNECT_TIMEOUT_MS
                 )
 
                 Log.d(
                     TAG,
-                    "Connected through selected upstream network: $host:$port"
+                    "Connected through selected upstream network: " +
+                        "$host/$address:$port"
                 )
 
                 return socket
-
             } catch (e: Exception) {
+                lastError = e
+
                 try {
-                    socket.close()
+                    socket?.close()
                 } catch (_: Exception) {
                 }
 
-                Log.w(
+                Log.d(
                     TAG,
-                    "Selected upstream connection failed: ${e.message}"
+                    "SOCKS upstream address failed " +
+                        "$address:$port: ${e.message}"
                 )
-
-                throw e
             }
         }
 
         throw java.io.IOException(
-            "No validated upstream internet network is available"
+            "Selected upstream network could not connect to $host:$port",
+            lastError
         )
     }
 

@@ -79,12 +79,18 @@ class PacServer(
             // No DIRECT fallback — explicit by design
             val pacScript = """
                 function FindProxyForURL(url, host) {
-                    // Local addresses bypass proxy
-                    if (isInNet(host, "192.168.49.0", "255.255.255.0")) return "DIRECT";
+                    /*
+                     * NetFetch gateway/local destinations stay local.
+                     * Public Internet traffic is always sent through the
+                     * NetFetch HTTP proxy.
+                     */
+                    if (host === "$proxyHost") return "DIRECT";
                     if (isInNet(host, "127.0.0.0", "255.0.0.0")) return "DIRECT";
                     if (isInNet(host, "10.0.0.0", "255.0.0.0")) return "DIRECT";
                     if (isInNet(host, "172.16.0.0", "255.240.0.0")) return "DIRECT";
-                    // All other traffic routes through NetFetch
+                    if (isInNet(host, "192.168.0.0", "255.255.0.0")) return "DIRECT";
+                    if (isInNet(host, "169.254.0.0", "255.255.0.0")) return "DIRECT";
+
                     return "PROXY $proxyHost:$proxyPort";
                 }
             """.trimIndent()
@@ -112,3 +118,7 @@ class PacServer(
         scope.cancel()
     }
 }
+
+/*
+ * © 2026 Created by MacDonald | Powered by Mixfia
+ */

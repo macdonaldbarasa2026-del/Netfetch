@@ -75,6 +75,107 @@ fun DevicesScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // Connection information for devices using the NetFetch proxy.
+        Card(
+            colors = CardDefaults.cardColors(containerColor = CardWhite),
+            border = BorderStroke(1.dp, PrimaryBlack.copy(alpha = 0.18f)),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "Internet Connection",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = PrimaryBlack
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Text(
+                    text = "Connect the device to the NetFetch Wi-Fi, then set its HTTP/HTTPS proxy to:",
+                    fontSize = 12.sp,
+                    color = TextMuted
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = CreamBackground,
+                    border = BorderStroke(1.dp, SurfaceBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Proxy server",
+                                fontSize = 11.sp,
+                                color = TextMuted
+                            )
+                            Text(
+                                text = "${config.hostIp}:${config.proxyPort}",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = PrimaryBlack
+                            )
+                        }
+
+                        IconButton(
+                            onClick = {
+                                val clipboard =
+                                    context.getSystemService(
+                                        Context.CLIPBOARD_SERVICE
+                                    ) as ClipboardManager
+
+                                clipboard.setPrimaryClip(
+                                    ClipData.newPlainText(
+                                        "NetFetch Proxy",
+                                        "${config.hostIp}:${config.proxyPort}"
+                                    )
+                                )
+
+                                Toast.makeText(
+                                    context,
+                                    "Proxy address copied",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        ) {
+                            Icon(
+                                Icons.Default.ContentCopy,
+                                contentDescription = "Copy proxy address",
+                                tint = PrimaryBlack
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "PAC: http://${config.hostIp}:${config.pacPort}/wpad.dat",
+                    fontSize = 11.sp,
+                    color = TextMuted
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "Important: NetFetch is a rootless proxy. The connected device must use the displayed proxy settings. Apps that ignore system HTTP/HTTPS proxy settings may not use the connection.",
+                    fontSize = 11.sp,
+                    color = TextMuted
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         if (connectedClients.isEmpty()) {
             Box(
                 modifier = Modifier
@@ -221,3 +322,7 @@ fun ClientDeviceCard(client: ClientDevice, context: Context) {
         }
     }
 }
+
+/*
+ * © 2026 Created by MacDonald | Powered by Mixfia
+ */
