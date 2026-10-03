@@ -16,6 +16,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -24,6 +25,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -102,7 +104,7 @@ class MainActivity : ComponentActivity() {
             hotspotService = binder.getService()
             isBound = true
 
-            lifecycleScopeLaunch {
+            lifecycleScope.launch {
                 hotspotService?.hotspotState?.collect { state ->
                     hotspotStateFlow.value = state
                 }
@@ -145,8 +147,14 @@ class MainActivity : ComponentActivity() {
 
                 Scaffold(
                     bottomBar = {
-                        NavigationBar(
-                            containerColor = CreamBackground,
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(CreamBackground)
+                        ) {
+                            NavigationBar(
+                                windowInsets = WindowInsets(0, 0, 0, 0),
+                                containerColor = CreamBackground,
                             contentColor = PrimaryBlack
                         ) {
                             NavigationBarItem(
@@ -207,6 +215,7 @@ class MainActivity : ComponentActivity() {
                                 )
                             )
                         }
+                        NetfetchWatermark()
                     }
                 ) { innerPadding ->
                     NavHost(
@@ -320,13 +329,6 @@ class MainActivity : ComponentActivity() {
             startForegroundService(intent)
         } else {
             startService(intent)
-        }
-    }
-
-    private fun lifecycleScopeLaunch(block: suspend () -> Unit) {
-        
-        kotlinx.coroutines.MainScope().launch {
-            block()
         }
     }
 
