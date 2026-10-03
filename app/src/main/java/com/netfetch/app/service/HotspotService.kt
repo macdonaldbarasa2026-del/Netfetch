@@ -393,6 +393,10 @@ class HotspotService : Service() {
     companion object {
         const val ACTION_START = "com.netfetch.action.START"
         const val ACTION_STOP = "com.netfetch.action.STOP"
+
+        const val EXTRA_SOCKS_PORT = "com.netfetch.app.extra.SOCKS_PORT"
+        const val EXTRA_SOCKS_USERNAME = "com.netfetch.app.extra.SOCKS_USERNAME"
+        const val EXTRA_SOCKS_PASSWORD = "com.netfetch.app.extra.SOCKS_PASSWORD"
         const val EXTRA_BAND = "extra_band"
         const val EXTRA_PORT = "extra_port"
         const val EXTRA_MODE = "extra_mode"

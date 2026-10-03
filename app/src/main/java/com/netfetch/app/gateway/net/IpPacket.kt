@@ -3,7 +3,7 @@ package com.netfetch.app.gateway.net
 internal const val PROTO_TCP = 6
 internal const val PROTO_UDP = 17
 
-internal data class Ipv4Header(
+data class Ipv4Header(
     val headerLength: Int,
     val totalLength: Int,
     val protocol: Int,
@@ -45,7 +45,7 @@ internal data class Ipv4Header(
     }
 }
 
-internal data class TcpHeader(
+data class TcpHeader(
     val sourcePort: Int,
     val destinationPort: Int,
     val sequence: Long,
@@ -93,7 +93,7 @@ internal data class TcpHeader(
     }
 }
 
-internal data class UdpHeader(
+data class UdpHeader(
     val sourcePort: Int,
     val destinationPort: Int,
     val length: Int
@@ -161,14 +161,14 @@ internal fun Int.toIpv4String(): String {
         "${this and 0xFF}"
 }
 
-internal data class TcpFlowKey(
+data class TcpFlowKey(
     val sourceIp: Int,
     val sourcePort: Int,
     val destinationIp: Int,
     val destinationPort: Int
 )
 
-internal data class UdpFlowKey(
+data class UdpFlowKey(
     val sourceIp: Int,
     val sourcePort: Int,
     val destinationIp: Int,

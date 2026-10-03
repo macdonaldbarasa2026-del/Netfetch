@@ -85,13 +85,13 @@ internal object PacketCodec {
 
         val packet = ByteArray(totalLength)
 
-        packet[0] = 0x45
-        packet[1] = 0
+        packet[0] = 0x45.toByte()
+        packet[1] = 0.toByte()
         writeShort(packet, 2, totalLength)
         writeShort(packet, 4, 0)
         writeShort(packet, 6, 0x4000)
-        packet[8] = 64
-        packet[9] = PROTO_TCP
+        packet[8] = 64.toByte()
+        packet[9] = PROTO_TCP.toByte()
 
         writeInt(packet, 12, sourceIp)
         writeInt(packet, 16, destinationIp)
@@ -149,13 +149,13 @@ internal object PacketCodec {
 
         val packet = ByteArray(totalLength)
 
-        packet[0] = 0x45
-        packet[1] = 0
+        packet[0] = 0x45.toByte()
+        packet[1] = 0.toByte()
         writeShort(packet, 2, totalLength)
         writeShort(packet, 4, 0)
         writeShort(packet, 6, 0x4000)
-        packet[8] = 64
-        packet[9] = PROTO_UDP
+        packet[8] = 64.toByte()
+        packet[9] = PROTO_UDP.toByte()
 
         writeInt(packet, 12, sourceIp)
         writeInt(packet, 16, destinationIp)

@@ -89,7 +89,7 @@ class Socks5ProxyServer(
         }
     }
 
-    private fun handleSocksClient(client: Socket) {
+    private suspend fun handleSocksClient(client: Socket) {
         val clientIp = client.inetAddress?.hostAddress ?: "Unknown"
         trackClient(clientIp)
 
@@ -342,7 +342,7 @@ class Socks5ProxyServer(
         )
     }
 
-    private fun tunnelTcp(
+    private suspend fun tunnelTcp(
         clientIp: String,
         clientSocket: Socket,
         clientIn: InputStream,
