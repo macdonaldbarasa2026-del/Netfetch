@@ -71,7 +71,7 @@ class WifiDirectManager(
             }
 
             try {
-                wifiP2pManager?.createGroup(channel, p2pConfigBuilder.build(), object : WifiP2pManager.ActionListener {
+                wifiP2pManager?.createGroup(channel ?: return, p2pConfigBuilder.build(), object : WifiP2pManager.ActionListener {
                     override fun onSuccess() {
                         Log.i(TAG, "Wi-Fi Direct group created successfully via Builder API")
                         fetchGroupDetails()

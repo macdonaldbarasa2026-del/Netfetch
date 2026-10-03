@@ -6,12 +6,12 @@ plugins {
 
 android {
     namespace = "com.netfetch.app"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.netfetch.app"
         minSdk = 24
-        targetSdk = 37
+        targetSdk = 36
         versionCode = 100
         versionName = "1.0.0"
 

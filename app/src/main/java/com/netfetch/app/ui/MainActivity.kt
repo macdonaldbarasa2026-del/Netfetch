@@ -23,6 +23,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import kotlinx.coroutines.launch
 import com.netfetch.app.model.BandPreference
 import com.netfetch.app.model.HotspotConfig
 import com.netfetch.app.model.HotspotState
@@ -249,6 +250,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun lifecycleScopeLaunch(block: suspend () -> Unit) {
+        
         kotlinx.coroutines.MainScope().launch {
             block()
         }
