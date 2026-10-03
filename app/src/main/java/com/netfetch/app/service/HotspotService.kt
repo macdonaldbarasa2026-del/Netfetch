@@ -407,11 +407,9 @@ class HotspotService : Service() {
             action = VpnGatewayService.ACTION_START
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
-        }
+        // Android's VpnService lifecycle starts the VPN with startService().
+        // The VPN service then promotes itself to the foreground.
+        startService(intent)
     }
 
     private fun stopVpnGateway() {
