@@ -19,9 +19,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.netfetch.app.ui.theme.*
+import com.netfetch.app.model.HotspotConfig
 
 @Composable
-fun HelpScreen() {
+fun HelpScreen(config: HotspotConfig) {
     val scrollState = rememberScrollState()
 
     Column(
@@ -75,7 +76,7 @@ fun HelpScreen() {
                 Spacer(modifier = Modifier.height(8.dp))
                 ArchBox("Your Phone Internet  (Wi-Fi or Mobile Data)")
                 ArchBox("↓")
-                ArchBox("NetFetch  (HTTP Proxy :8282 / SOCKS5 :1080)")
+                ArchBox("NetFetch  (HTTP Proxy :${config.proxyPort} / SOCKS5 :${config.socksPort})")
                 ArchBox("↓")
                 ArchBox("Wi-Fi Direct  (SSID: DIRECT-NetFetch-*)")
                 ArchBox("↓")
@@ -94,19 +95,19 @@ fun HelpScreen() {
             diagramBoxes = listOf(
                 "Settings → Network & Internet → Proxy",
                 "Manual Proxy Setup → Turn ON",
-                "Address: 192.168.49.1  |  Port: 8282",
+                "Address: ${config.hostIp}  |  Port: ${config.proxyPort}",
                 "Save → Done"
             ),
             steps = listOf(
                 "1. Connect your Windows PC to the NetFetch Wi-Fi network.",
                 "2. Open Settings → Network & Internet → Proxy.",
                 "3. Under 'Manual proxy setup', toggle ON 'Use a proxy server'.",
-                "4. Enter Address: 192.168.49.1 and Port: 8282.",
+                "4. Enter Address: ${config.hostIp} and Port: ${config.proxyPort}.",
                 "5. Click Save. Internet should now work through NetFetch.",
                 "",
                 "Alternative — PAC URL method:",
                 "In the Proxy settings, choose 'Use setup script'.",
-                "Enter: http://192.168.49.1:8283/wpad.dat",
+                "Enter: http://${config.hostIp}:${config.pacPort}/wpad.dat",
                 "Click Save."
             )
         )
@@ -120,7 +121,7 @@ fun HelpScreen() {
             diagramBoxes = listOf(
                 "Settings → Wi-Fi → Tap (i) next to NetFetch",
                 "Scroll down → Configure Proxy → Manual",
-                "Server: 192.168.49.1  |  Port: 8282",
+                "Server: ${config.hostIp}  |  Port: ${config.proxyPort}",
                 "Tap Save"
             ),
             steps = listOf(
@@ -128,7 +129,7 @@ fun HelpScreen() {
                 "2. Go to Settings → Wi-Fi.",
                 "3. Tap the blue (i) icon next to the NetFetch network name.",
                 "4. Scroll down and tap 'Configure Proxy'.",
-                "5. Select 'Manual'. Enter Server: 192.168.49.1 and Port: 8282.",
+                "5. Select 'Manual'. Enter Server: ${config.hostIp} and Port: ${config.proxyPort}.",
                 "6. Tap Save (top right). Internet should now work through NetFetch."
             )
         )
@@ -143,13 +144,13 @@ fun HelpScreen() {
                 "System Settings → Network → Wi-Fi → Details",
                 "Proxies tab",
                 "Enable: Web Proxy (HTTP) + Secure Proxy (HTTPS)",
-                "Server: 192.168.49.1  |  Port: 8282"
+                "Server: ${config.hostIp}  |  Port: ${config.proxyPort}"
             ),
             steps = listOf(
                 "1. Connect your Mac to the NetFetch Wi-Fi network.",
                 "2. Go to System Settings → Network → Wi-Fi → Details...",
                 "3. Click the 'Proxies' tab.",
-                "4. Enable 'Web Proxy (HTTP)'. Set server: 192.168.49.1 port: 8282.",
+                "4. Enable 'Web Proxy (HTTP)'. Set server: ${config.hostIp} port: ${config.proxyPort}.",
                 "5. Enable 'Secure Web Proxy (HTTPS)'. Use the same address and port.",
                 "6. Click OK, then Apply."
             )
@@ -164,23 +165,23 @@ fun HelpScreen() {
             diagramBoxes = listOf(
                 "Option A: System proxy via GNOME / KDE Settings",
                 "Option B: Environment variables",
-                "HTTP_PROXY=http://192.168.49.1:8282",
-                "HTTPS_PROXY=http://192.168.49.1:8282"
+                "HTTP_PROXY=http://${config.hostIp}:${config.proxyPort}",
+                "HTTPS_PROXY=http://${config.hostIp}:${config.proxyPort}"
             ),
             steps = listOf(
                 "GNOME:",
                 "1. Settings → Network → Network Proxy → Manual.",
-                "2. HTTP Proxy: 192.168.49.1  Port: 8282.",
-                "3. HTTPS Proxy: 192.168.49.1  Port: 8282. Apply.",
+                "2. HTTP Proxy: ${config.hostIp}  Port: ${config.proxyPort}.",
+                "3. HTTPS Proxy: ${config.hostIp}  Port: ${config.proxyPort}. Apply.",
                 "",
                 "Terminal (per-session):",
-                "export HTTP_PROXY=http://192.168.49.1:8282",
-                "export HTTPS_PROXY=http://192.168.49.1:8282",
-                "export http_proxy=http://192.168.49.1:8282",
-                "export https_proxy=http://192.168.49.1:8282",
+                "export HTTP_PROXY=http://${config.hostIp}:${config.proxyPort}",
+                "export HTTPS_PROXY=http://${config.hostIp}:${config.proxyPort}",
+                "export http_proxy=http://${config.hostIp}:${config.proxyPort}",
+                "export https_proxy=http://${config.hostIp}:${config.proxyPort}",
                 "",
                 "For PAC URL support, enter in browser proxy settings:",
-                "http://192.168.49.1:8283/wpad.dat"
+                "http://${config.hostIp}:${config.pacPort}/wpad.dat"
             )
         )
 
@@ -194,7 +195,7 @@ fun HelpScreen() {
                 "Wi-Fi → Long-press NetFetch network",
                 "Modify Network → Advanced Options",
                 "Proxy → Manual",
-                "Proxy Host: 192.168.49.1  |  Port: 8282"
+                "Proxy Host: ${config.hostIp}  |  Port: ${config.proxyPort}"
             ),
             steps = listOf(
                 "1. Connect your Android device to the NetFetch Wi-Fi network.",
@@ -202,13 +203,79 @@ fun HelpScreen() {
                 "3. Tap 'Modify Network' or the pencil/edit icon.",
                 "4. Expand 'Advanced Options' or 'Proxy Settings'.",
                 "5. Change Proxy from 'None' to 'Manual'.",
-                "6. Proxy hostname: 192.168.49.1, Proxy port: 8282.",
-                "7. Save. Web browsers and most apps will now use the proxy.",
+                "6. Proxy hostname: ${config.hostIp}, Proxy port: ${config.proxyPort}.",
+                "7. Save the network settings.",
+                "8. Open a browser and test an HTTPS website.",
                 "",
-                "Note: Apps using raw sockets (some games) may need SOCKS5 mode (Pro).",
-                "SOCKS5: 192.168.49.1:1080 (TCP CONNECT only — UDP not supported)"
+                "HTTP/HTTPS proxy:",
+                "${config.hostIp}:${config.proxyPort}",
+                "Best for browsers and apps that honor the Android Wi-Fi proxy.",
+                "",
+                "PAC configuration:",
+                "http://${config.hostIp}:${config.pacPort}/wpad.dat",
+                "Use this when the device or browser supports automatic proxy configuration.",
+                "",
+                "SOCKS5 (Pro):",
+                "${config.hostIp}:${config.socksPort}",
+                "TCP CONNECT only. UDP ASSOCIATE is not supported.",
+                "Use a SOCKS5-capable app when you need SOCKS5 instead of the system HTTP proxy."
             )
         )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Troubleshooting
+        Card(
+            colors = CardDefaults.cardColors(containerColor = CardWhite),
+            border = BorderStroke(1.dp, SurfaceBorder),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "Troubleshooting",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = PrimaryBlack
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                FaqItem(
+                    question = "Connected to NetFetch but there is no internet",
+                    answer = "First confirm that the NetFetch phone itself has working internet. " +
+                            "Then check that the client is connected to the correct NetFetch network " +
+                            "and that the proxy address and port match the values shown on the Home screen."
+                )
+
+                FaqItem(
+                    question = "The proxy does not connect",
+                    answer = "Make sure NetFetch is Active and the displayed gateway address is reachable " +
+                            "from the client device. Check that the HTTP proxy port is correct. " +
+                            "If using SOCKS5, verify the SOCKS5 username and password in NetFetch Settings."
+                )
+
+                FaqItem(
+                    question = "Some apps work but other apps do not",
+                    answer = "This is expected with proxy-based networking. Only applications that honor the " +
+                            "configured HTTP, HTTPS, PAC, or SOCKS5 proxy can use that path. " +
+                            "Apps that require direct networking or UDP may not work."
+                )
+
+                FaqItem(
+                    question = "SOCKS5 works for browsing but a game does not connect",
+                    answer = "NetFetch SOCKS5 currently supports TCP CONNECT only. " +
+                            "Games or applications that require UDP traffic cannot use the SOCKS5 tunnel."
+                )
+
+                FaqItem(
+                    question = "The NetFetch network is not visible",
+                    answer = "Wi-Fi Direct availability depends on the Android device and its current network state. " +
+                            "Keep Wi-Fi enabled, keep NetFetch Active, and check that Android has granted " +
+                            "the required nearby Wi-Fi permissions."
+                )
+            }
+        }
 
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -244,7 +311,7 @@ fun HelpScreen() {
                 )
 
                 FaqItem(
-                    question = "The gateway IP is not 192.168.49.1 — what should I enter?",
+                    question = "The gateway IP is different — what should I enter?",
                     answer = "Check the 'Gateway' field in the NetFetch status dashboard on the Home screen. " +
                             "NetFetch detects the actual Wi-Fi Direct interface address and shows it there."
                 )

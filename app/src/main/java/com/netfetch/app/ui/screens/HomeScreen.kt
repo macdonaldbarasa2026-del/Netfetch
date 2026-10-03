@@ -47,6 +47,7 @@ fun HomeScreen(
     val isStarting = state is HotspotState.Starting
 
     val activeState = state as? HotspotState.Active
+    var showSocksPassword by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -349,6 +350,21 @@ fun HomeScreen(
 
                 if (config.mode == TetherMode.PRO) {
                     CredentialItem(label = "SOCKS5 Port (TCP only)", value = config.socksPort.toString(), context = context)
+                    CredentialItem(label = "SOCKS5 Username", value = config.socksUsername, context = context)
+                    CredentialItem(
+                        label = "SOCKS5 Password",
+                        value = if (showSocksPassword) config.socksPassword else "••••••••",
+                        context = context
+                    )
+                    TextButton(
+                        onClick = { showSocksPassword = !showSocksPassword },
+                        modifier = Modifier.align(Alignment.End)
+                    ) {
+                        Text(
+                            if (showSocksPassword) "Hide password" else "Show password",
+                            color = PrimaryBlack
+                        )
+                    }
                 }
 
                 CredentialItem(label = "PAC URL", value = "http://${config.hostIp}:${config.pacPort}/wpad.dat", context = context)

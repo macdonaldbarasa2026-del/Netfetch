@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
+import android.net.VpnService
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Build
@@ -39,10 +41,50 @@ import com.netfetch.app.ui.theme.TextMuted
 
 class MainActivity : ComponentActivity() {
 
+    private lateinit var preferences: SharedPreferences
+
+    private fun loadSavedConfig(): HotspotConfig {
+        val prefs = preferences
+
+        val bandOrdinal = prefs.getInt(
+            "band_preference",
+            BandPreference.AUTO.ordinal
+        )
+
+        val band = BandPreference.fromOrdinal(bandOrdinal)
+
+        return HotspotConfig(
+            proxyPort = prefs.getInt("proxy_port", 8282),
+            socksPort = prefs.getInt("socks_port", 1080),
+            socksUsername = prefs.getString("socks_username", "netfetch") ?: "netfetch",
+            socksPassword = prefs.getString("socks_password", "netfetch1080") ?: "netfetch1080",
+            bandPreference = band,
+            maxConnectedClients = prefs.getInt("max_clients", 10)
+        )
+    }
+
+    private fun saveConfig(config: HotspotConfig) {
+        preferences.edit()
+            .putInt("proxy_port", config.proxyPort)
+            .putInt("socks_port", config.socksPort)
+            .putString("socks_username", config.socksUsername)
+            .putString("socks_password", config.socksPassword)
+            .putInt("band_preference", config.bandPreference.ordinal)
+            .putInt("max_clients", config.maxConnectedClients)
+            .apply()
+    }
+
     private var hotspotService: HotspotService? = null
     private var isBound = false
 
     private val hotspotStateFlow = mutableStateOf<HotspotState>(HotspotState.Idle)
+
+    private val vpnPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == RESULT_OK) {
+                startHotspotServiceAfterVpnPermission(configStateFlow.value)
+            }
+        }
     private val configStateFlow = mutableStateOf(HotspotConfig())
 
     private val serviceConnection = object : ServiceConnection {
@@ -75,6 +117,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        preferences = getSharedPreferences("netfetch_settings", Context.MODE_PRIVATE)
+        configStateFlow.value = loadSavedConfig()
 
         Intent(this, HotspotService::class.java).also { intent ->
             bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
@@ -182,13 +227,16 @@ class MainActivity : ComponentActivity() {
                         }
                         composable("devices") {
                             val clients = if (state is HotspotState.Active) (state as HotspotState.Active).connectedClients else emptyList()
-                            DevicesScreen(connectedClients = clients)
+                            DevicesScreen(connectedClients = clients, config = config)
                         }
                         composable("settings") {
                             SettingsScreen(
                                 config = config,
                                 onUpdateConfig = { newConfig ->
                                     config = newConfig
+                                    configStateFlow.value = newConfig
+                                    saveConfig(newConfig)
+
                                     if (state is HotspotState.Active) {
                                         startHotspotService(newConfig)
                                     }
@@ -196,7 +244,7 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         composable("help") {
-                            HelpScreen()
+                            HelpScreen(config = config)
                         }
                     }
                 }
@@ -236,12 +284,27 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startHotspotService(config: HotspotConfig) {
+        val vpnIntent = VpnService.prepare(this)
+
+        if (vpnIntent != null) {
+            vpnPermissionLauncher.launch(vpnIntent)
+            return
+        }
+
+        startHotspotServiceAfterVpnPermission(config)
+    }
+
+    private fun startHotspotServiceAfterVpnPermission(config: HotspotConfig) {
         val intent = Intent(this, HotspotService::class.java).apply {
             action = HotspotService.ACTION_START
             putExtra(HotspotService.EXTRA_BAND, config.bandPreference.ordinal)
             putExtra(HotspotService.EXTRA_PORT, config.proxyPort)
+            putExtra(HotspotService.EXTRA_SOCKS_PORT, config.socksPort)
+            putExtra(HotspotService.EXTRA_SOCKS_USERNAME, config.socksUsername)
+            putExtra(HotspotService.EXTRA_SOCKS_PASSWORD, config.socksPassword)
             putExtra(HotspotService.EXTRA_MODE, config.mode.ordinal)
         }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)
         } else {

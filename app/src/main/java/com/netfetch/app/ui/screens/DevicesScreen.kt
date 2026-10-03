@@ -22,13 +22,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.netfetch.app.model.ClientDevice
+import com.netfetch.app.model.HotspotConfig
 import com.netfetch.app.ui.theme.*
 import java.text.SimpleDateFormat
 import java.util.*
 
 @Composable
 fun DevicesScreen(
-    connectedClients: List<ClientDevice>
+    connectedClients: List<ClientDevice>,
+    config: HotspotConfig
 ) {
     val context = LocalContext.current
 
@@ -96,7 +98,7 @@ fun DevicesScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Connect client devices to the NetFetch Wi-Fi network and set proxy to 192.168.49.1:8282.",
+                        text = "Connect client devices to the NetFetch Wi-Fi network and set the proxy to ${config.hostIp}:${config.proxyPort}.",
                         fontSize = 13.sp,
                         color = TextMuted,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -112,6 +114,15 @@ fun DevicesScreen(
                 }
             }
         }
+    }
+}
+
+private fun formatBytes(bytes: Long): String {
+    return when {
+        bytes < 1024 -> "$bytes B"
+        bytes < 1024 * 1024 -> String.format("%.1f KB", bytes / 1024.0)
+        bytes < 1024 * 1024 * 1024 -> String.format("%.2f MB", bytes / (1024.0 * 1024.0))
+        else -> String.format("%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0))
     }
 }
 
@@ -174,13 +185,23 @@ fun ClientDeviceCard(client: ClientDevice, context: Context) {
                     color = CreamBackground,
                     border = BorderStroke(1.dp, SurfaceBorder)
                 ) {
-                    Text(
-                        text = client.totalUsageFormatted,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = GreenSuccess,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
+                    Column(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                        horizontalAlignment = Alignment.End
+                    ) {
+                        Text(
+                            text = "↓ ${formatBytes(client.bytesDownloaded)}",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = GreenSuccess
+                        )
+                        Text(
+                            text = "↑ ${formatBytes(client.bytesUploaded)}",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PrimaryBlack
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))

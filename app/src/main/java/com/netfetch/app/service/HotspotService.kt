@@ -18,6 +18,7 @@ import com.netfetch.app.model.HotspotState
 import com.netfetch.app.model.TetherMode
 import com.netfetch.app.network.ConnectivityTester
 import com.netfetch.app.network.UpstreamNetworkManager
+import com.netfetch.app.network.NetfetchUpstreamRuntime
 import com.netfetch.app.network.WifiDirectManager
 import com.netfetch.app.proxy.HttpProxyServer
 import com.netfetch.app.proxy.PacServer
@@ -100,11 +101,21 @@ class HotspotService : Service() {
             ACTION_START -> {
                 val bandOrdinal = intent.getIntExtra(EXTRA_BAND, BandPreference.AUTO.ordinal)
                 val port = intent.getIntExtra(EXTRA_PORT, 8282)
+                val socksPort = intent.getIntExtra(EXTRA_SOCKS_PORT, 1080)
+                val socksUsername = intent.getStringExtra(EXTRA_SOCKS_USERNAME) ?: currentConfig.socksUsername
+                val socksPassword = intent.getStringExtra(EXTRA_SOCKS_PASSWORD) ?: currentConfig.socksPassword
                 val modeOrdinal = intent.getIntExtra(EXTRA_MODE, TetherMode.NORMAL.ordinal)
                 val band = BandPreference.fromOrdinal(bandOrdinal)
                 val mode = TetherMode.entries.getOrElse(modeOrdinal) { TetherMode.NORMAL }
 
-                currentConfig = currentConfig.copy(bandPreference = band, proxyPort = port, mode = mode)
+                currentConfig = currentConfig.copy(
+                    bandPreference = band,
+                    proxyPort = port,
+                    socksPort = socksPort,
+                    socksUsername = socksUsername,
+                    socksPassword = socksPassword,
+                    mode = mode
+                )
                 startHotspot(currentConfig)
             }
             ACTION_STOP -> {
@@ -121,11 +132,12 @@ class HotspotService : Service() {
         startForegroundServiceNotification("Starting NetFetch...")
 
         // Stop existing instances cleanly
+        stopVpnGateway()
         stopProxyServers()
 
         // 1. Start upstream network detection
-        upstreamNetworkManager?.stop()
-        upstreamNetworkManager = UpstreamNetworkManager(this).also { it.start() }
+        upstreamNetworkManager?.let { NetfetchUpstreamRuntime.stop(it) }
+        upstreamNetworkManager = NetfetchUpstreamRuntime.start(this)
 
         // Monitor upstream state changes
         upstreamMonitorJob?.cancel()
@@ -142,7 +154,7 @@ class HotspotService : Service() {
         // 2. Start HTTP proxy (binds to upstream network)
         proxyServer = HttpProxyServer(
             port = config.proxyPort,
-            upstreamNetworkProvider = { upstreamNetworkManager?.currentNetwork },
+            upstreamNetworkProvider = { NetfetchUpstreamRuntime.currentNetwork() },
             onClientActivity = { clientsMap ->
                 activeClients = clientsMap.values.toList()
                 updateActiveState()
@@ -159,7 +171,9 @@ class HotspotService : Service() {
         if (config.mode == TetherMode.PRO) {
             socks5Server = Socks5ProxyServer(
                 socksPort = config.socksPort,
-                upstreamNetworkProvider = { upstreamNetworkManager?.currentNetwork },
+                username = config.socksUsername,
+                password = config.socksPassword,
+                upstreamNetworkProvider = { NetfetchUpstreamRuntime.currentNetwork() },
                 onClientActivity = { clientsMap ->
                     val combined = (activeClients + clientsMap.values).distinctBy { it.ipAddress }
                     activeClients = combined
@@ -195,7 +209,12 @@ class HotspotService : Service() {
         )
         wifiDirectManager?.startGroup(currentConfig)
 
-        // 6. Periodic internet verification
+        // 6. Start the real IPv4 TUN gateway.
+        // Upstream sockets are protected and bound to the selected
+        // Wi-Fi/mobile network, so they do not loop back into the VPN.
+        startVpnGateway()
+
+        // 7. Periodic internet verification
         startInternetMonitor()
     }
 
@@ -221,6 +240,15 @@ class HotspotService : Service() {
         serviceScope.launch(Dispatchers.IO) {
             val network = upstreamNetworkManager?.currentNetwork
             val result = ConnectivityTester.testConnectivity(network)
+
+            if (!result && network != null) {
+                Log.w(
+                    TAG,
+                    "Internet verification failed for $network, requesting upstream recovery"
+                )
+                upstreamNetworkManager?.reportConnectivityFailure(network)
+            }
+
             if (result != internetVerified) {
                 internetVerified = result
                 Log.i(TAG, "Internet verified: $result")
@@ -235,12 +263,13 @@ class HotspotService : Service() {
         internetMonitorJob?.cancel()
         upstreamMonitorJob?.cancel()
 
+        stopVpnGateway()
         stopProxyServers()
 
         wifiDirectManager?.stopGroup()
         wifiDirectManager = null
 
-        upstreamNetworkManager?.stop()
+        upstreamNetworkManager?.let { NetfetchUpstreamRuntime.stop(it) }
         upstreamNetworkManager = null
 
         activeClients = emptyList()
@@ -368,4 +397,24 @@ class HotspotService : Service() {
         const val EXTRA_PORT = "extra_port"
         const val EXTRA_MODE = "extra_mode"
     }
+
+    private fun startVpnGateway() {
+        val intent = Intent(this, VpnGatewayService::class.java).apply {
+            action = VpnGatewayService.ACTION_START
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+
+    private fun stopVpnGateway() {
+        val intent = Intent(this, VpnGatewayService::class.java).apply {
+            action = VpnGatewayService.ACTION_STOP
+        }
+        startService(intent)
+    }
+
 }

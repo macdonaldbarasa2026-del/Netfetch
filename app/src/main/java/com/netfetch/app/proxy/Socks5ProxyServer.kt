@@ -28,6 +28,8 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class Socks5ProxyServer(
     private val socksPort: Int = 1080,
+    private val username: String? = null,
+    private val password: String? = null,
     private val upstreamNetworkProvider: () -> Network? = { null },
     private val onClientActivity: (Map<String, ClientDevice>) -> Unit,
     private val onBandwidthUpdate: (uploadSpeed: Long, downloadSpeed: Long, totalBytes: Long) -> Unit
@@ -44,6 +46,11 @@ class Socks5ProxyServer(
     companion object {
         private const val SOCKS5_VERSION = 5
         private const val AUTH_NO_AUTH = 0
+        private const val AUTH_USERNAME_PASSWORD = 2
+        private const val AUTH_VERSION = 1
+        private const val AUTH_SUCCESS = 0
+        private const val AUTH_FAILURE = 1
+
         private const val CMD_CONNECT = 1
         private const val CMD_UDP_ASSOCIATE = 3
         private const val ATYP_IPV4 = 1
@@ -104,9 +111,108 @@ class Socks5ProxyServer(
             val methods = ByteArray(nMethods)
             readFully(input, methods)
 
-            // We always use NO AUTH (0x00)
-            output.write(byteArrayOf(SOCKS5_VERSION.toByte(), AUTH_NO_AUTH.toByte()))
+            val authenticationRequired =
+                !username.isNullOrEmpty() && !password.isNullOrEmpty()
+
+            val selectedMethod =
+                if (authenticationRequired) {
+                    AUTH_USERNAME_PASSWORD
+                } else {
+                    AUTH_NO_AUTH
+                }
+
+            val methodSupported = when (selectedMethod) {
+                AUTH_NO_AUTH ->
+                    methods.any { (it.toInt() and 0xFF) == AUTH_NO_AUTH }
+
+                AUTH_USERNAME_PASSWORD ->
+                    methods.any {
+                        (it.toInt() and 0xFF) == AUTH_USERNAME_PASSWORD
+                    }
+
+                else -> false
+            }
+
+            if (!methodSupported) {
+                output.write(
+                    byteArrayOf(
+                        SOCKS5_VERSION.toByte(),
+                        0xFF.toByte()
+                    )
+                )
+                output.flush()
+                client.close()
+                return
+            }
+
+            output.write(
+                byteArrayOf(
+                    SOCKS5_VERSION.toByte(),
+                    selectedMethod.toByte()
+                )
+            )
             output.flush()
+
+            if (selectedMethod == AUTH_USERNAME_PASSWORD) {
+
+                val authVersion = input.read()
+
+                if (authVersion != AUTH_VERSION) {
+                    client.close()
+                    return
+                }
+
+                val usernameLength = input.read()
+
+                if (usernameLength <= 0 || usernameLength > 255) {
+                    client.close()
+                    return
+                }
+
+                val usernameBytes = ByteArray(usernameLength)
+                readFully(input, usernameBytes)
+
+                val passwordLength = input.read()
+
+                if (passwordLength <= 0 || passwordLength > 255) {
+                    client.close()
+                    return
+                }
+
+                val passwordBytes = ByteArray(passwordLength)
+                readFully(input, passwordBytes)
+
+                val suppliedUsername =
+                    String(usernameBytes, Charsets.UTF_8)
+
+                val suppliedPassword =
+                    String(passwordBytes, Charsets.UTF_8)
+
+                val authenticated =
+                    suppliedUsername == username &&
+                    suppliedPassword == password
+
+                output.write(
+                    byteArrayOf(
+                        AUTH_VERSION.toByte(),
+                        if (authenticated) {
+                            AUTH_SUCCESS.toByte()
+                        } else {
+                            AUTH_FAILURE.toByte()
+                        }
+                    )
+                )
+                output.flush()
+
+                if (!authenticated) {
+                    Log.w(
+                        TAG,
+                        "SOCKS5 authentication failed from $clientIp"
+                    )
+                    client.close()
+                    return
+                }
+            }
 
             // ── 2. SOCKS5 Request ──
             val reqVer = input.read()
@@ -190,18 +296,50 @@ class Socks5ProxyServer(
 
     private fun openUpstreamSocket(host: String, port: Int): Socket {
         val upstream = upstreamNetworkProvider()
-        return if (upstream != null) {
-            try {
-                val socket = upstream.socketFactory.createSocket()
-                socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
-                socket
+
+        if (upstream != null) {
+            val socket = try {
+                upstream.socketFactory.createSocket()
             } catch (e: Exception) {
-                Log.w(TAG, "SOCKS5 upstream network socket failed, falling back: ${e.message}")
-                Socket().apply { connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS) }
+                Log.e(
+                    TAG,
+                    "Unable to create socket on selected upstream network",
+                    e
+                )
+                throw e
             }
-        } else {
-            Socket().apply { connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS) }
+
+            try {
+                socket.connect(
+                    InetSocketAddress(host, port),
+                    CONNECT_TIMEOUT_MS
+                )
+
+                Log.d(
+                    TAG,
+                    "Connected through selected upstream network: $host:$port"
+                )
+
+                return socket
+
+            } catch (e: Exception) {
+                try {
+                    socket.close()
+                } catch (_: Exception) {
+                }
+
+                Log.w(
+                    TAG,
+                    "Selected upstream connection failed: ${e.message}"
+                )
+
+                throw e
+            }
         }
+
+        throw java.io.IOException(
+            "No validated upstream internet network is available"
+        )
     }
 
     private fun tunnelTcp(
@@ -214,25 +352,79 @@ class Socks5ProxyServer(
     ) {
         try {
             val targetSocket = openUpstreamSocket(host, port)
-            targetSocket.soTimeout = READ_TIMEOUT_MS
+            // Established proxy tunnels must support long-lived connections.
+            targetSocket.soTimeout = 0
+            clientSocket.soTimeout = 0
 
-            // Build success reply
-            val localAddr = (targetSocket.localAddress as? Inet4Address)?.address ?: ByteArray(4)
+            // Build success reply using the actual upstream address family.
+            val localAddress = targetSocket.localAddress
+            val localAddr = localAddress.address
+            val replyAtyp = when (localAddress) {
+                is Inet6Address -> ATYP_IPV6
+                else -> ATYP_IPV4
+            }
+
             val localPort = targetSocket.localPort
-            sendReply(clientOut, REP_SUCCESS, ATYP_IPV4, localAddr, localPort)
+
+            sendReply(
+                clientOut,
+                REP_SUCCESS,
+                replyAtyp,
+                localAddr,
+                localPort
+            )
 
             val targetIn = targetSocket.getInputStream()
             val targetOut = targetSocket.getOutputStream()
 
-            val job1 = proxyScope.launch { pipeStreams(clientIp, clientIn, targetOut, isUpload = true) }
-            val job2 = proxyScope.launch { pipeStreams(clientIp, targetIn, clientOut, isUpload = false) }
-
-            runBlocking {
-                job1.join()
-                job2.join()
+            val job1 = proxyScope.launch {
+                pipeStreams(
+                    clientIp,
+                    clientIn,
+                    targetOut,
+                    isUpload = true
+                )
             }
 
-            try { targetSocket.close() } catch (_: Exception) {}
+            val job2 = proxyScope.launch {
+                pipeStreams(
+                    clientIp,
+                    targetIn,
+                    clientOut,
+                    isUpload = false
+                )
+            }
+
+            try {
+                // Wait until either direction finishes.
+                kotlinx.coroutines.selects.select<Unit> {
+                    job1.onJoin { }
+                    job2.onJoin { }
+                }
+            } finally {
+                job1.cancel()
+                job2.cancel()
+
+                try {
+                    clientSocket.close()
+                } catch (_: Exception) {
+                }
+
+                try {
+                    targetSocket.close()
+                } catch (_: Exception) {
+                }
+
+                try {
+                    job1.join()
+                } catch (_: Exception) {
+                }
+
+                try {
+                    job2.join()
+                } catch (_: Exception) {
+                }
+            }
 
         } catch (e: Exception) {
             Log.d(TAG, "SOCKS5 CONNECT failed to $host:$port: ${e.message}")
@@ -247,8 +439,32 @@ class Socks5ProxyServer(
             while (input.read(buffer).also { read = it } != -1) {
                 output.write(buffer, 0, read)
                 output.flush()
-                if (isUpload) totalUploadCounter.addAndGet(read.toLong())
-                else totalDownloadCounter.addAndGet(read.toLong())
+                val amount = read.toLong()
+
+                if (isUpload) {
+                    totalUploadCounter.addAndGet(amount)
+                } else {
+                    totalDownloadCounter.addAndGet(amount)
+                }
+
+                connectedClientsMap.computeIfPresent(clientIp) { _, existing ->
+                    if (isUpload) {
+                        existing.copy(
+                            bytesUploaded = existing.bytesUploaded + amount
+                        )
+                    } else {
+                        existing.copy(
+                            bytesDownloaded = existing.bytesDownloaded + amount
+                        )
+                    }
+                }
+
+                onClientActivity(HashMap(connectedClientsMap))
+                onBandwidthUpdate(
+                    totalUploadCounter.get(),
+                    totalDownloadCounter.get(),
+                    totalUploadCounter.get() + totalDownloadCounter.get()
+                )
             }
         } catch (_: Exception) {}
     }

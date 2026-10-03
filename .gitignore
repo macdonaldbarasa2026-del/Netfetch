@@ -1,3 +1,5 @@
 /.gradle/
 *.keystore
 /.cxx/
+# Local/generated APK artifacts
+app-debug-apk/

@@ -8,56 +8,71 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * ConnectivityTester
+ * Performs a real Internet reachability test on a specific upstream Network.
  *
- * Tests whether the selected upstream network actually has internet access
- * by making a lightweight HTTP HEAD request bound to that network.
- *
- * This is separate from Android's NET_CAPABILITY_VALIDATED because validated
- * just means Android thinks the network is working — it may still have a
- * captive portal or be flaky. We do a real round-trip to confirm.
+ * The request is explicitly opened through the supplied Network so NetFetch
+ * never accidentally validates the phone's default network instead of the
+ * network currently selected as the upstream.
  */
 object ConnectivityTester {
-    private val TAG = "NetFetchConnTest"
-    private val TEST_URL = "http://connectivitycheck.gstatic.com/generate_204"
-    private const val CONNECT_TIMEOUT_MS = 5000
-    private const val READ_TIMEOUT_MS = 5000
 
-    /**
-     * Tests internet connectivity on the given upstream network.
-     * Returns true if the network can successfully reach the internet.
-     * If [network] is null, uses the device default network.
-     */
-    suspend fun testConnectivity(network: Network? = null): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val url = URL(TEST_URL)
-            val connection = if (network != null) {
-                network.openConnection(url) as HttpURLConnection
-            } else {
-                url.openConnection() as HttpURLConnection
+    private const val TAG = "NetFetchConnTest"
+
+    private const val TEST_URL =
+        "http://connectivitycheck.gstatic.com/generate_204"
+
+    private const val CONNECT_TIMEOUT_MS = 5_000
+    private const val READ_TIMEOUT_MS = 5_000
+
+    suspend fun testConnectivity(network: Network?): Boolean =
+        withContext(Dispatchers.IO) {
+            if (network == null) {
+                Log.w(TAG, "Connectivity test skipped: no upstream network")
+                return@withContext false
             }
 
-            connection.apply {
-                requestMethod = "HEAD"
-                connectTimeout = CONNECT_TIMEOUT_MS
-                readTimeout = READ_TIMEOUT_MS
-                instanceFollowRedirects = false
-                setRequestProperty("Connection", "close")
-            }
+            var connection: HttpURLConnection? = null
 
             try {
+                val url = URL(TEST_URL)
+
+                connection = network.openConnection(url) as HttpURLConnection
+
+                connection.apply {
+                    requestMethod = "GET"
+                    connectTimeout = CONNECT_TIMEOUT_MS
+                    readTimeout = READ_TIMEOUT_MS
+                    instanceFollowRedirects = false
+                    useCaches = false
+                    setRequestProperty("Connection", "close")
+                    setRequestProperty("Cache-Control", "no-cache")
+                }
+
                 val responseCode = connection.responseCode
-                // 204 = No Content (Google's connectivity check)
-                // 200 = OK
-                val result = responseCode in 200..299
-                Log.i(TAG, "Connectivity test result: $responseCode -> $result (network=$network)")
+
+                /*
+                 * The Google connectivity endpoint is expected to return
+                 * HTTP 204 with an empty body.
+                 *
+                 * Requiring 204 prevents a captive portal or arbitrary HTTP
+                 * 2xx response from being treated as confirmed Internet.
+                 */
+                val result = responseCode == HttpURLConnection.HTTP_NO_CONTENT
+
+                Log.i(
+                    TAG,
+                    "Connectivity test: HTTP $responseCode -> $result (network=$network)"
+                )
+
                 result
+            } catch (e: Exception) {
+                Log.w(
+                    TAG,
+                    "Connectivity test failed on $network: ${e.message}"
+                )
+                false
             } finally {
-                connection.disconnect()
+                connection?.disconnect()
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Connectivity test failed: ${e.message}")
-            false
         }
-    }
 }

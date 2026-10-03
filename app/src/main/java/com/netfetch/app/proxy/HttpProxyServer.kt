@@ -142,22 +142,18 @@ class HttpProxyServer(
 
     private fun openUpstreamSocket(host: String, port: Int): Socket {
         val upstream = upstreamNetworkProvider()
-        return if (upstream != null) {
-            try {
-                val socket = upstream.socketFactory.createSocket()
-                socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
-                socket
-            } catch (e: Exception) {
-                Log.w(TAG, "Upstream network socket failed, falling back: ${e.message}")
-                // Fall back to default routing
-                Socket().apply {
-                    connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
-                }
-            }
-        } else {
-            Socket().apply {
-                connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
-            }
+            ?: throw java.io.IOException("No validated upstream internet network is available")
+
+        return try {
+            val socket = upstream.socketFactory.createSocket()
+            socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
+            socket
+        } catch (e: Exception) {
+            Log.w(TAG, "Selected upstream network connection failed for $host:$port: ${e.message}")
+            throw java.io.IOException(
+                "Selected upstream network could not connect to $host:$port",
+                e
+            )
         }
     }
 
