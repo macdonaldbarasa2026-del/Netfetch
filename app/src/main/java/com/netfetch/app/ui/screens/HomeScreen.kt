@@ -344,7 +344,7 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 CredentialItem(label = "Wi-Fi Name (SSID)", value = config.ssid, context = context)
-                CredentialItem(label = "Password", value = config.passphrase, context = context)
+                CredentialItem(label = "Wi-Fi Key", value = config.passphrase, context = context)
                 CredentialItem(label = "Proxy / Gateway IP", value = config.hostIp, context = context)
                 CredentialItem(label = "HTTP Proxy Port", value = config.proxyPort.toString(), context = context)
 

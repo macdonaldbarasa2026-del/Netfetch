@@ -35,6 +35,7 @@ class WifiDirectManager(
     private val onGroupInfoAvailable: (WifiP2pGroup?, String, String, String) -> Unit,
     private val onError: (String) -> Unit
 ) {
+    private var activePassphrase: String = "82828282"
     private val TAG = "NetFetchP2P"
 
     // Fallback gateway if we cannot detect the actual one
@@ -70,6 +71,8 @@ class WifiDirectManager(
 
     @SuppressLint("MissingPermission")
     private fun createNewGroup(config: HotspotConfig) {
+        activePassphrase = config.passphrase
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val p2pConfigBuilder = WifiP2pConfig.Builder()
                 .setNetworkName(config.ssid)
@@ -131,7 +134,7 @@ class WifiDirectManager(
             if (group != null) {
                 currentGroup = group
                 val ssid = group.networkName ?: "DIRECT-NetFetch-AccessPoint"
-                val passphrase = group.passphrase ?: "netfetch8282"
+                val passphrase = group.passphrase ?: activePassphrase
                 val gateway = detectGatewayAddress(ssid)
                 Log.i(TAG, "Group active - SSID: $ssid, Gateway: $gateway")
                 onGroupInfoAvailable(group, ssid, passphrase, gateway)

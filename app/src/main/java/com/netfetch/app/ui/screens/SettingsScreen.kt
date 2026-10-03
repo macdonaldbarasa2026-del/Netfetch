@@ -53,6 +53,18 @@ fun SettingsScreen(
         mutableStateOf(false)
     }
 
+    var wifiSsid by remember(config.ssid) {
+        mutableStateOf(config.ssid)
+    }
+
+    var wifiPassphrase by remember(config.passphrase) {
+        mutableStateOf(config.passphrase)
+    }
+
+    var showWifiPassword by remember {
+        mutableStateOf(false)
+    }
+
     var selectedBand by remember(config.bandPreference) {
         mutableStateOf(config.bandPreference)
     }
@@ -82,6 +94,140 @@ fun SettingsScreen(
         )
 
         Spacer(modifier = Modifier.height(20.dp))
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = CardWhite),
+            border = BorderStroke(1.dp, SurfaceBorder),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "Wi-Fi Sharing",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = TextDark
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Text(
+                    text = "Set the Wi-Fi name and 8-digit key that other devices use to connect to NetFetch.",
+                    fontSize = 12.sp,
+                    color = TextMuted
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = wifiSsid,
+                    onValueChange = { wifiSsid = it },
+                    label = { Text("Wi-Fi Name (SSID)") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = PrimaryBlack,
+                        unfocusedBorderColor = SurfaceBorder,
+                        focusedLabelColor = PrimaryBlack
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = wifiPassphrase,
+                    onValueChange = {
+                        if (it.length <= 8 && it.all(Char::isDigit)) {
+                            wifiPassphrase = it
+                        }
+                    },
+                    label = { Text("Wi-Fi Key (8 digits)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.NumberPassword
+                    ),
+                    visualTransformation = if (showWifiPassword) {
+                        VisualTransformation.None
+                    } else {
+                        PasswordVisualTransformation()
+                    },
+                    trailingIcon = {
+                        IconButton(
+                            onClick = {
+                                showWifiPassword = !showWifiPassword
+                            }
+                        ) {
+                            Icon(
+                                imageVector = if (showWifiPassword) {
+                                    Icons.Default.VisibilityOff
+                                } else {
+                                    Icons.Default.Visibility
+                                },
+                                contentDescription = if (showWifiPassword) {
+                                    "Hide Wi-Fi key"
+                                } else {
+                                    "Show Wi-Fi key"
+                                }
+                            )
+                        }
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = PrimaryBlack,
+                        unfocusedBorderColor = SurfaceBorder,
+                        focusedLabelColor = PrimaryBlack
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Button(
+                    onClick = {
+                        when {
+                            wifiSsid.isBlank() -> {
+                                Toast.makeText(
+                                    context,
+                                    "Wi-Fi name cannot be empty",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+
+                            !wifiPassphrase.matches(Regex("\\d{8}")) -> {
+                                Toast.makeText(
+                                    context,
+                                    "Wi-Fi key must contain exactly 8 digits",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+
+                            else -> {
+                                onUpdateConfig(
+                                    config.copy(
+                                        ssid = wifiSsid,
+                                        passphrase = wifiPassphrase
+                                    )
+                                )
+
+                                Toast.makeText(
+                                    context,
+                                    "Wi-Fi sharing key saved",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PrimaryBlack,
+                        contentColor = CardWhite
+                    ),
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text("Save Wi-Fi Key")
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         Card(
             colors = CardDefaults.cardColors(containerColor = CardWhite),

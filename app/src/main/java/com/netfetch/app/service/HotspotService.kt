@@ -100,6 +100,8 @@ class HotspotService : Service() {
         when (action) {
             ACTION_START -> {
                 val bandOrdinal = intent.getIntExtra(EXTRA_BAND, BandPreference.AUTO.ordinal)
+                val ssid = intent.getStringExtra(EXTRA_SSID) ?: currentConfig.ssid
+                val passphrase = intent.getStringExtra(EXTRA_PASSPHRASE) ?: currentConfig.passphrase
                 val port = intent.getIntExtra(EXTRA_PORT, 8282)
                 val socksPort = intent.getIntExtra(EXTRA_SOCKS_PORT, 1080)
                 val socksUsername = intent.getStringExtra(EXTRA_SOCKS_USERNAME) ?: currentConfig.socksUsername
@@ -109,6 +111,8 @@ class HotspotService : Service() {
                 val mode = TetherMode.entries.getOrElse(modeOrdinal) { TetherMode.NORMAL }
 
                 currentConfig = currentConfig.copy(
+                    ssid = ssid,
+                    passphrase = passphrase,
                     bandPreference = band,
                     proxyPort = port,
                     socksPort = socksPort,
@@ -397,6 +401,8 @@ class HotspotService : Service() {
         const val EXTRA_SOCKS_PORT = "com.netfetch.app.extra.SOCKS_PORT"
         const val EXTRA_SOCKS_USERNAME = "com.netfetch.app.extra.SOCKS_USERNAME"
         const val EXTRA_SOCKS_PASSWORD = "com.netfetch.app.extra.SOCKS_PASSWORD"
+        const val EXTRA_SSID = "com.netfetch.app.extra.SSID"
+        const val EXTRA_PASSPHRASE = "com.netfetch.app.extra.PASSPHRASE"
         const val EXTRA_BAND = "extra_band"
         const val EXTRA_PORT = "extra_port"
         const val EXTRA_MODE = "extra_mode"

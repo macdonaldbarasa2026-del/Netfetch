@@ -7,7 +7,7 @@ enum class TetherMode(val displayName: String, val description: String) {
 
 data class HotspotConfig(
     val ssid: String = "DIRECT-NetFetch-AccessPoint",
-    val passphrase: String = "netfetch8282",
+    val passphrase: String = "82828282",
     val hostIp: String = "192.168.49.1",
     val proxyPort: Int = 8282,
     val socksPort: Int = 1080,

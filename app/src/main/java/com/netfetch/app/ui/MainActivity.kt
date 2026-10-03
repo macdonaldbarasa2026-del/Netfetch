@@ -54,6 +54,10 @@ class MainActivity : ComponentActivity() {
         val band = BandPreference.fromOrdinal(bandOrdinal)
 
         return HotspotConfig(
+            ssid = prefs.getString("wifi_ssid", "DIRECT-NetFetch-AccessPoint")
+                ?: "DIRECT-NetFetch-AccessPoint",
+            passphrase = prefs.getString("wifi_passphrase", "82828282")
+                ?: "82828282",
             proxyPort = prefs.getInt("proxy_port", 8282),
             socksPort = prefs.getInt("socks_port", 1080),
             socksUsername = prefs.getString("socks_username", "netfetch") ?: "netfetch",
@@ -65,6 +69,8 @@ class MainActivity : ComponentActivity() {
 
     private fun saveConfig(config: HotspotConfig) {
         preferences.edit()
+            .putString("wifi_ssid", config.ssid)
+            .putString("wifi_passphrase", config.passphrase)
             .putInt("proxy_port", config.proxyPort)
             .putInt("socks_port", config.socksPort)
             .putString("socks_username", config.socksUsername)
@@ -297,6 +303,8 @@ class MainActivity : ComponentActivity() {
     private fun startHotspotServiceAfterVpnPermission(config: HotspotConfig) {
         val intent = Intent(this, HotspotService::class.java).apply {
             action = HotspotService.ACTION_START
+            putExtra(HotspotService.EXTRA_SSID, config.ssid)
+            putExtra(HotspotService.EXTRA_PASSPHRASE, config.passphrase)
             putExtra(HotspotService.EXTRA_BAND, config.bandPreference.ordinal)
             putExtra(HotspotService.EXTRA_PORT, config.proxyPort)
             putExtra(HotspotService.EXTRA_SOCKS_PORT, config.socksPort)
