@@ -27,6 +27,7 @@ import com.netfetch.app.ui.MainActivity
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
@@ -73,44 +74,7 @@ class HotspotService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
 
     private var currentConfig = HotspotConfig()
-
-    /*
-     * Wi-Fi Direct group membership is the authoritative source for
-     * connected devices. Proxy activity is used only to attach traffic
-     * statistics to those devices.
-     */
-    private var groupClients = emptyList<ClientDevice>()
-    private var proxyClients = emptyList<ClientDevice>()
     private var activeClients = emptyList<ClientDevice>()
-private var wifiDirectClients = emptyList<ClientDevice>()
-private var proxyClients = emptyList<ClientDevice>()
-
-private fun rebuildClientList() {
-    val merged = LinkedHashMap<String, ClientDevice>()
-
-    for (client in wifiDirectClients) {
-        merged[client.macAddress.lowercase()] = client
-    }
-
-    for (client in proxyClients) {
-        val existing = merged.values.firstOrNull {
-            it.ipAddress == client.ipAddress ||
-                (
-                    client.macAddress != "Unknown MAC" &&
-                    it.macAddress.equals(client.macAddress, ignoreCase = true)
-                )
-        }
-
-        if (existing != null) {
-            merged.remove(existing.macAddress.lowercase())
-        }
-
-        merged[client.ipAddress] = client
-    }
-
-    activeClients = merged.values.toList()
-}
-
     private var currentUpSpeed = 0L
     private var currentDownSpeed = 0L
     private var currentGateway = "192.168.49.1"
@@ -119,7 +83,7 @@ private fun rebuildClientList() {
 
     private var internetMonitorJob: Job? = null
     private var upstreamMonitorJob: Job? = null
-        private var clientMonitorJob: Job? = null
+    private var gatewayStartJob: Job? = null
 
     inner class LocalBinder : Binder() {
         fun getService(): HotspotService = this@HotspotService
@@ -198,8 +162,8 @@ private fun rebuildClientList() {
             port = config.proxyPort,
             upstreamNetworkProvider = { NetfetchUpstreamRuntime.currentNetwork() },
             onClientActivity = { clientsMap ->
-                proxyClients = clientsMap.values.toList()
-                rebuildActiveClients()
+                activeClients = clientsMap.values.toList()
+                updateActiveState()
             },
             onBandwidthUpdate = { upSpeed, downSpeed, _ ->
                 currentUpSpeed = upSpeed
@@ -217,8 +181,9 @@ private fun rebuildClientList() {
                 password = config.socksPassword,
                 upstreamNetworkProvider = { NetfetchUpstreamRuntime.currentNetwork() },
                 onClientActivity = { clientsMap ->
-                    proxyClients = clientsMap.values.toList()
-                    rebuildActiveClients()
+                    val combined = (activeClients + clientsMap.values).distinctBy { it.ipAddress }
+                    activeClients = combined
+                    updateActiveState()
                 },
                 onBandwidthUpdate = { _, _, _ -> }
             ).also { it.start() }
@@ -232,26 +197,15 @@ private fun rebuildClientList() {
             context = this,
             onGroupInfoAvailable = { group, ssid, passphrase, gateway ->
                 currentGateway = gateway
-
-                /*
-                 * Android gives us the actual devices connected to the
-                 * Wi-Fi Direct group here. Previously this information was
-                 * logged but discarded, which made the UI always show zero
-                 * devices until proxy traffic happened.
-                 */
-                groupClients = buildGroupClients(group)
-
                 currentConfig = currentConfig.copy(
                     ssid = ssid,
                     passphrase = passphrase,
                     hostIp = gateway
                 )
-
                 // Restart PAC server with correct gateway address
                 pacServer?.stop()
                 startPacServer(currentConfig, gateway)
-
-                rebuildActiveClients()
+                updateActiveState()
                 updateNotification()
             },
             onError = { errorMsg ->
@@ -261,21 +215,9 @@ private fun rebuildClientList() {
         )
         wifiDirectManager?.startGroup(currentConfig)
 
-        /*
-         * Keep refreshing group information so connection/disconnection
-         * events are reflected even when the Wi-Fi Direct broadcast is
-         * delayed or behaves differently across Android vendors.
-         */
-        clientMonitorJob?.cancel()
-        clientMonitorJob = serviceScope.launch {
-            while (isActive) {
-                wifiDirectManager?.fetchGroupDetails()
-                delay(2_000L)
-            }
-        }
-
         // 6. Wait for a selected and verified upstream before
         // starting the real IPv4 TUN gateway.
+        gatewayStartJob?.cancel()
         gatewayStartJob = serviceScope.launch {
             val manager = upstreamNetworkManager
             if (manager == null) {
@@ -346,10 +288,8 @@ private fun rebuildClientList() {
         upstreamMonitorJob?.cancel()
         upstreamMonitorJob = null
 
+        gatewayStartJob?.cancel()
         gatewayStartJob = null
-
-        clientMonitorJob?.cancel()
-        clientMonitorJob = null
 
         stopVpnGateway()
         stopProxyServers()
@@ -360,11 +300,7 @@ private fun rebuildClientList() {
         upstreamNetworkManager?.let { NetfetchUpstreamRuntime.stop(it) }
         upstreamNetworkManager = null
 
-        groupClients = emptyList()
-        proxyClients = emptyList()
         activeClients = emptyList()
-        wifiDirectClients = emptyList()
-        proxyClients = emptyList()
         currentUpSpeed = 0L
         currentDownSpeed = 0L
         internetVerified = false
@@ -381,107 +317,6 @@ private fun rebuildClientList() {
         proxyServer = null
         socks5Server = null
         pacServer = null
-    }
-
-    private fun buildGroupClients(
-        group: android.net.wifi.p2p.WifiP2pGroup?
-    ): List<ClientDevice> {
-        if (group == null) {
-            return emptyList()
-        }
-
-        val arpTable = readArpTable()
-        val now = System.currentTimeMillis()
-
-        return group.clientList.map { device ->
-            val mac = device.deviceAddress
-            val ip = arpTable[mac.lowercase()] ?: "Awaiting IP"
-            val name = device.deviceName.ifBlank { "Wi-Fi Client" }
-
-            ClientDevice(
-                ipAddress = ip,
-                macAddress = mac,
-                deviceName = name,
-                connectedTimestamp = now
-            )
-        }
-    }
-
-    private fun readArpTable(): Map<String, String> {
-        val result = mutableMapOf<String, String>()
-
-        try {
-            java.io.File("/proc/net/arp").forEachLine { line ->
-                val parts = line.trim().split(Regex("\\s+"))
-
-                if (parts.size >= 4 && parts[3].contains(":")) {
-                    result[parts[3].lowercase()] = parts[0]
-                }
-            }
-        } catch (e: Exception) {
-            Log.d(TAG, "ARP table unavailable: ${e.message}")
-        }
-
-        return result
-    }
-
-    private fun rebuildActiveClients() {
-        val arpTable = readArpTable()
-
-        val enrichedProxyClients =
-            proxyClients.map { client ->
-                if (client.macAddress != "Unknown MAC") {
-                    client
-                } else {
-                    val mac =
-                        arpTable.entries
-                            .firstOrNull { entry ->
-                                entry.value == client.ipAddress
-                            }
-                            ?.key
-
-                    if (mac.isNullOrBlank()) {
-                        client
-                    } else {
-                        client.copy(macAddress = mac)
-                    }
-                }
-            }
-
-        /*
-         * Wi-Fi Direct membership determines who is connected.
-         * Proxy traffic only supplies usage statistics.
-         */
-        activeClients =
-            groupClients.map { groupClient ->
-                val proxyClient =
-                    enrichedProxyClients.firstOrNull { proxy ->
-                        (
-                            groupClient.ipAddress != "Awaiting IP" &&
-                            proxy.ipAddress == groupClient.ipAddress
-                        ) ||
-                        (
-                            groupClient.macAddress != "Unknown MAC" &&
-                            proxy.macAddress != "Unknown MAC" &&
-                            groupClient.macAddress.equals(
-                                proxy.macAddress,
-                                ignoreCase = true
-                            )
-                        )
-                    }
-
-                if (proxyClient == null) {
-                    groupClient
-                } else {
-                    groupClient.copy(
-                        bytesUploaded = proxyClient.bytesUploaded,
-                        bytesDownloaded = proxyClient.bytesDownloaded
-                    )
-                }
-            }
-
-        updateActiveState()
-        updateNotification()
     }
 
     private fun updateActiveState() {
