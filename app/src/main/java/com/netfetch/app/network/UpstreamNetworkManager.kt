@@ -18,18 +18,40 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Selects and tracks the best upstream Internet network.
+ * Single authority for Netfetch's real upstream Internet connection.
  *
- * NetFetch clients use a local Wi-Fi Direct network, while outbound Internet
- * traffic must leave through the phone's actual Internet network.
+ * A network is NOT considered ready merely because Android reports
+ * NET_CAPABILITY_INTERNET. Netfetch performs an actual reachability test
+ * before publishing that network as Internet-ready.
  *
- * This class is the single authority for selecting that upstream network.
+ * Selection policy:
+ *  1. Prefer Wi-Fi.
+ *  2. Prefer Android-validated networks.
+ *  3. Verify actual Internet reachability.
+ *  4. Use cellular/other only when they pass verification.
+ *
+ * Failed networks are temporarily cooled down so a dead network cannot
+ * immediately get rediscovered and selected again.
  */
 class UpstreamNetworkManager(private val context: Context) {
 
-    private val TAG = "NetFetchUpstream"
+    private companion object {
+        const val TAG = "NetFetchUpstream"
+
+        const val RECOVERY_MAX_ATTEMPTS = 6
+
+        const val FAILURE_COOLDOWN_MS = 15_000L
+
+        const val VALIDATION_TIMEOUT_MS = 8_000L
+
+        const val RECOVERY_DELAY_FIRST_MS = 500L
+        const val RECOVERY_DELAY_SECOND_MS = 1_000L
+        const val RECOVERY_DELAY_THIRD_MS = 2_000L
+        const val RECOVERY_DELAY_LATER_MS = 5_000L
+    }
 
     enum class UpstreamType {
         NONE,
@@ -46,71 +68,148 @@ class UpstreamNetworkManager(private val context: Context) {
     )
 
     private val connectivityManager =
-        context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        context.getSystemService(Context.CONNECTIVITY_SERVICE)
+            as ConnectivityManager
 
-    private val _upstreamState = MutableStateFlow(UpstreamState())
-    val upstreamState: StateFlow<UpstreamState> = _upstreamState.asStateFlow()
+    private val _upstreamState =
+        MutableStateFlow(UpstreamState())
+
+    val upstreamState: StateFlow<UpstreamState> =
+        _upstreamState.asStateFlow()
 
     val currentNetwork: Network?
         get() = _upstreamState.value.network
 
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val scope =
+        CoroutineScope(Dispatchers.IO + SupervisorJob())
+
     private val selectionMutex = Mutex()
 
-    private val availableNetworks = mutableMapOf<Network, UpstreamType>()
+    /*
+     * Keep only one pending selection request. Android can emit several
+     * callbacks during one connectivity transition, so callers should
+     * schedule through requestReselect() instead of queueing separate
+     * selection jobs.
+     */
+    private var selectionJob: Job? = null
+
+    /*
+     * Network callbacks can arrive on Android callback threads while
+     * discovery/recovery is running on Dispatchers.IO.
+     *
+     * ConcurrentHashMap prevents unsafe concurrent access.
+     */
+    private val availableNetworks =
+        ConcurrentHashMap<Network, UpstreamType>()
+
+    /*
+     * A network that has just failed a real Internet test is temporarily
+     * excluded. This prevents:
+     *
+     * failed network
+     * -> remove
+     * -> Android still reports INTERNET capability
+     * -> rediscover
+     * -> immediately select same dead network
+     */
+    private val failedUntil =
+        ConcurrentHashMap<Network, Long>()
 
     private var recoveryJob: Job? = null
+
+    @Volatile
     private var started = false
 
-    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+    private val networkCallback =
+        object : ConnectivityManager.NetworkCallback() {
 
-        override fun onAvailable(network: Network) {
-            val caps = connectivityManager.getNetworkCapabilities(network) ?: return
-            val type = determineType(caps)
+            override fun onAvailable(network: Network) {
+                if (!started) return
 
-            Log.i(TAG, "Network available: $network type=$type")
+                val caps =
+                    connectivityManager.getNetworkCapabilities(network)
+                        ?: return
 
-            availableNetworks[network] = type
-            reselect()
-        }
+                val type = determineType(caps)
 
-        override fun onLost(network: Network) {
-            Log.i(TAG, "Network lost: $network")
+                Log.i(
+                    TAG,
+                    "Network available: $network type=$type"
+                )
 
-            availableNetworks.remove(network)
+                availableNetworks[network] = type
 
-            if (_upstreamState.value.network == network) {
-                setNoInternetIfNecessary()
+                requestReselect()
             }
 
-            reselect()
-        }
+            override fun onLost(network: Network) {
+                Log.i(TAG, "Network lost: $network")
 
-        override fun onCapabilitiesChanged(
-            network: Network,
-            caps: NetworkCapabilities
-        ) {
-            val type = determineType(caps)
-            val usable = isCandidate(caps)
-
-            Log.d(
-                TAG,
-                "Capabilities changed: $network type=$type usable=$usable"
-            )
-
-            if (usable) {
-                availableNetworks[network] = type
-            } else {
                 availableNetworks.remove(network)
+                failedUntil.remove(network)
 
                 if (_upstreamState.value.network == network) {
-                    setNoInternetIfNecessary()
+                    publishState(
+                        UpstreamState(
+                            displayName = "Recovering Internet..."
+                        )
+                    )
                 }
+
+                scheduleRecovery()
             }
 
-            reselect()
+            override fun onCapabilitiesChanged(
+                network: Network,
+                caps: NetworkCapabilities
+            ) {
+                if (!started) return
+
+                val type = determineType(caps)
+
+                if (isCandidate(caps)) {
+                    availableNetworks[network] = type
+
+                    /*
+                     * A capability change can mean the network recovered.
+                     * Give it a fresh validation attempt.
+                     */
+                    if (
+                        caps.hasCapability(
+                            NetworkCapabilities.NET_CAPABILITY_VALIDATED
+                        )
+                    ) {
+                        failedUntil.remove(network)
+                    }
+                } else {
+                    availableNetworks.remove(network)
+
+                    if (_upstreamState.value.network == network) {
+                        publishState(
+                            UpstreamState(
+                                displayName = "Recovering Internet..."
+                            )
+                        )
+                    }
+                }
+
+                Log.d(
+                    TAG,
+                    "Capabilities changed: $network " +
+                        "type=$type " +
+                        "internet=" +
+                        caps.hasCapability(
+                            NetworkCapabilities.NET_CAPABILITY_INTERNET
+                        ) +
+                        "validated=" +
+                        caps.hasCapability(
+                            NetworkCapabilities.NET_CAPABILITY_VALIDATED
+                        )
+                )
+
+                requestReselect()
+            }
         }
-    }
 
     fun start() {
         if (started) {
@@ -121,39 +220,53 @@ class UpstreamNetworkManager(private val context: Context) {
         started = true
 
         try {
-            val request = NetworkRequest.Builder()
-                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                .build()
+            val request =
+                NetworkRequest.Builder()
+                    .addCapability(
+                        NetworkCapabilities.NET_CAPABILITY_INTERNET
+                    )
+                    .build()
 
             connectivityManager.registerNetworkCallback(
                 request,
                 networkCallback
             )
 
-            Log.i(TAG, "UpstreamNetworkManager started")
+            Log.i(
+                TAG,
+                "UpstreamNetworkManager started"
+            )
         } catch (e: Exception) {
             started = false
+
             Log.e(
                 TAG,
-                "Failed to register network callback: ${e.message}",
+                "Failed to register network callback",
                 e
             )
+
+            publishState(
+                UpstreamState(
+                    displayName = "No Internet"
+                )
+            )
+
             return
         }
 
         detectCurrentNetworks()
-        reselect()
+        requestReselect()
     }
 
     fun stop() {
-        if (!started) {
-            return
-        }
+        if (!started) return
 
         started = false
 
         try {
-            connectivityManager.unregisterNetworkCallback(networkCallback)
+            connectivityManager.unregisterNetworkCallback(
+                networkCallback
+            )
         } catch (e: Exception) {
             Log.w(
                 TAG,
@@ -164,38 +277,52 @@ class UpstreamNetworkManager(private val context: Context) {
         recoveryJob?.cancel()
         recoveryJob = null
 
-        availableNetworks.clear()
-        _upstreamState.value = UpstreamState()
+        selectionJob?.cancel()
+        selectionJob = null
 
-        Log.i(TAG, "UpstreamNetworkManager stopped")
+        availableNetworks.clear()
+        failedUntil.clear()
+
+        publishState(UpstreamState())
+
+        Log.i(
+            TAG,
+            "UpstreamNetworkManager stopped"
+        )
     }
 
     /**
-     * Called by HotspotService after a real Internet connectivity test fails.
+     * Reports a real connectivity failure for the selected network.
      *
-     * This forces the manager to discard the current failed candidate and
-     * search for another usable upstream instead of continuing to send new
-     * connections through a dead network.
+     * The failed network enters a short cooldown and is not immediately
+     * eligible for reselection. Recovery then searches for another network
+     * and validates it before publishing Internet-ready state.
      */
     fun reportConnectivityFailure(network: Network?) {
+        if (!started) return
+
         if (network == null) {
-            reselect()
+            scheduleRecovery()
             return
         }
 
+        val until =
+            System.currentTimeMillis() +
+                FAILURE_COOLDOWN_MS
+
+        failedUntil[network] = until
+
         Log.w(
             TAG,
-            "Connectivity failure reported for $network"
+            "Connectivity failure reported for $network; " +
+                "cooling down for ${FAILURE_COOLDOWN_MS}ms"
         )
 
-        availableNetworks.remove(network)
-
         if (_upstreamState.value.network == network) {
-            _upstreamState.value = UpstreamState(
-                network = null,
-                type = UpstreamType.NONE,
-                hasInternet = false,
-                displayName = "Recovering Internet..."
+            publishState(
+                UpstreamState(
+                    displayName = "Recovering Internet..."
+                )
             )
         }
 
@@ -203,25 +330,54 @@ class UpstreamNetworkManager(private val context: Context) {
     }
 
     /**
-     * Forces a fresh scan of currently available networks.
+     * Forces a fresh discovery pass.
      */
     fun refresh() {
         if (!started) return
 
         detectCurrentNetworks()
-        reselect()
+        requestReselect()
     }
 
     private fun detectCurrentNetworks() {
-        val current = mutableMapOf<Network, UpstreamType>()
+        if (!started) return
+
+        val now = System.currentTimeMillis()
+        val current =
+            mutableMapOf<Network, UpstreamType>()
 
         for (network in connectivityManager.allNetworks) {
-            val caps = connectivityManager.getNetworkCapabilities(network)
-                ?: continue
+            val caps =
+                connectivityManager.getNetworkCapabilities(network)
+                    ?: continue
 
-            if (isCandidate(caps)) {
-                current[network] = determineType(caps)
+            if (!isCandidate(caps)) {
+                continue
             }
+
+            /*
+             * Do not resurrect a recently failed network just because
+             * Android still reports NET_CAPABILITY_INTERNET.
+             */
+            val failedUntilTime =
+                failedUntil[network]
+
+            if (
+                failedUntilTime != null &&
+                failedUntilTime > now
+            ) {
+                continue
+            }
+
+            if (
+                failedUntilTime != null &&
+                failedUntilTime <= now
+            ) {
+                failedUntil.remove(network)
+            }
+
+            current[network] =
+                determineType(caps)
         }
 
         availableNetworks.clear()
@@ -229,153 +385,363 @@ class UpstreamNetworkManager(private val context: Context) {
 
         Log.d(
             TAG,
-            "Detected ${current.size} usable upstream candidate(s)"
+            "Detected ${current.size} upstream candidate(s)"
         )
     }
 
-    private fun reselect() {
-        scope.launch {
-            selectionMutex.withLock {
-                if (!started) return@withLock
+    private fun requestReselect() {
+        if (!started) return
 
-                val current = _upstreamState.value.network
+        /*
+         * Do not cancel an active validation just because Android emitted
+         * another callback. Several callbacks can belong to the same
+         * connectivity transition.
+         *
+         * Keep one selection operation in flight at a time.
+         */
+        if (selectionJob?.isActive == true) {
+            return
+        }
 
-                if (current != null && isNetworkCurrentlyUsable(current)) {
-                    val currentType = availableNetworks[current]
-                        ?: determineType(
-                            connectivityManager.getNetworkCapabilities(current)
-                                ?: return@withLock
-                        )
-
-                    publishState(
-                        UpstreamState(
-                            network = current,
-                            type = currentType,
-                            hasInternet = true,
-                            displayName = displayNameFor(currentType)
-                        )
-                    )
-
-                    return@withLock
-                }
-
-                val chosen = chooseBestCandidate()
-
-                if (chosen != null) {
-                    val type = availableNetworks[chosen]
-                        ?: UpstreamType.OTHER
-
-                    publishState(
-                        UpstreamState(
-                            network = chosen,
-                            type = type,
-                            hasInternet = true,
-                            displayName = displayNameFor(type)
-                        )
-                    )
-                } else {
-                    publishState(
-                        UpstreamState(
-                            network = null,
-                            type = UpstreamType.NONE,
-                            hasInternet = false,
-                            displayName = "No Internet"
-                        )
-                    )
-                }
+        selectionJob = scope.launch {
+            try {
+                reselect()
+            } finally {
+                selectionJob = null
             }
         }
     }
 
-    private fun chooseBestCandidate(): Network? {
-        val wifi = availableNetworks.entries.firstOrNull {
-            it.value == UpstreamType.WIFI
-        }?.key
+    private suspend fun reselect() {
+        selectionMutex.withLock {
+                if (!started) return@withLock
 
-        val cellular = availableNetworks.entries.firstOrNull {
-            it.value == UpstreamType.CELLULAR
-        }?.key
+                /*
+                 * Never keep advertising the current network forever.
+                 * Revalidate it whenever the selection process runs.
+                 */
+                val current =
+                    _upstreamState.value.network
 
-        val other = availableNetworks.entries.firstOrNull {
-            it.value == UpstreamType.OTHER
-        }?.key
+                if (
+                    current != null &&
+                    !isCoolingDown(current) &&
+                    isNetworkCandidate(current)
+                ) {
+                    val currentType =
+                        availableNetworks[current]
+                            ?: determineType(
+                                connectivityManager
+                                    .getNetworkCapabilities(current)
+                                    ?: return@withLock
+                            )
 
-        return wifi ?: cellular ?: other
+                    val validated =
+                        validateNetwork(current)
+
+                    if (validated) {
+                        publishState(
+                            UpstreamState(
+                                network = current,
+                                type = currentType,
+                                hasInternet = true,
+                                displayName =
+                                    displayNameFor(
+                                        currentType
+                                    )
+                            )
+                        )
+
+                        recoveryJob?.cancel()
+                        recoveryJob = null
+
+                        return@withLock
+                    }
+
+                    Log.w(
+                        TAG,
+                        "Current upstream failed validation: $current"
+                    )
+
+                    markFailed(current)
+
+                    publishState(
+                        UpstreamState(
+                            displayName =
+                                "Recovering Internet..."
+                        )
+                    )
+                }
+
+                /*
+                 * Candidates are ordered by transport and Android's
+                 * validation state, then each candidate receives a real
+                 * Internet test.
+                 */
+                val candidates =
+                    chooseBestCandidates()
+
+                for (network in candidates) {
+                    if (!started) {
+                        return@withLock
+                    }
+
+                    if (isCoolingDown(network)) {
+                        continue
+                    }
+
+                    val caps =
+                        connectivityManager
+                            .getNetworkCapabilities(network)
+                            ?: continue
+
+                    if (!isCandidate(caps)) {
+                        continue
+                    }
+
+                    Log.i(
+                        TAG,
+                        "Validating upstream candidate: $network"
+                    )
+
+                    if (!validateNetwork(network)) {
+                        Log.w(
+                            TAG,
+                            "Candidate failed Internet validation: $network"
+                        )
+
+                        markFailed(network)
+                        continue
+                    }
+
+                    val type =
+                        determineType(caps)
+
+                    publishState(
+                        UpstreamState(
+                            network = network,
+                            type = type,
+                            hasInternet = true,
+                            displayName =
+                                displayNameFor(type)
+                        )
+                    )
+
+                    Log.i(
+                        TAG,
+                        "Internet-ready upstream selected: " +
+                            "$network type=$type"
+                    )
+
+                    recoveryJob?.cancel()
+                    recoveryJob = null
+
+                    return@withLock
+                }
+                publishState(
+                    UpstreamState(
+                        displayName = "No Internet"
+                    )
+                )
+            }
+        }
+
+    private fun chooseBestCandidates(): List<Network> {
+        val now = System.currentTimeMillis()
+
+        return availableNetworks
+            .entries
+            .asSequence()
+            .filter { entry ->
+                val failedUntilTime =
+                    failedUntil[entry.key]
+
+                failedUntilTime == null ||
+                    failedUntilTime <= now
+            }
+            .sortedWith(
+                compareByDescending<
+                    Map.Entry<Network, UpstreamType>
+                > {
+                    transportPriority(it.value)
+                }.thenByDescending {
+                    isAndroidValidated(it.key)
+                }
+            )
+            .map { it.key }
+            .toList()
     }
 
-    private fun isNetworkCurrentlyUsable(network: Network): Boolean {
-        val caps = connectivityManager.getNetworkCapabilities(network)
-            ?: return false
+    private fun transportPriority(
+        type: UpstreamType
+    ): Int {
+        return when (type) {
+            UpstreamType.WIFI -> 3
+            UpstreamType.CELLULAR -> 2
+            UpstreamType.OTHER -> 1
+            UpstreamType.NONE -> 0
+        }
+    }
+
+    private fun isAndroidValidated(
+        network: Network
+    ): Boolean {
+        val caps =
+            connectivityManager.getNetworkCapabilities(network)
+                ?: return false
+
+        return caps.hasCapability(
+            NetworkCapabilities.NET_CAPABILITY_VALIDATED
+        )
+    }
+
+    private suspend fun validateNetwork(
+        network: Network
+    ): Boolean {
+        if (!isNetworkCandidate(network)) {
+            return false
+        }
+
+        return try {
+            kotlinx.coroutines.withTimeout(
+                VALIDATION_TIMEOUT_MS
+            ) {
+                ConnectivityTester.testConnectivity(network)
+            }
+        } catch (e: Exception) {
+            Log.w(
+                TAG,
+                "Upstream validation failed for $network: ${e.message}"
+            )
+            false
+        }
+    }
+
+    private fun isNetworkCandidate(
+        network: Network
+    ): Boolean {
+        val caps =
+            connectivityManager.getNetworkCapabilities(network)
+                ?: return false
 
         return isCandidate(caps)
     }
 
-    private fun isCandidate(caps: NetworkCapabilities): Boolean {
+    private fun isCandidate(
+        caps: NetworkCapabilities
+    ): Boolean {
         return caps.hasCapability(
             NetworkCapabilities.NET_CAPABILITY_INTERNET
         )
     }
 
-    private fun setNoInternetIfNecessary() {
-        if (_upstreamState.value.network != null) {
-            _upstreamState.value = UpstreamState(
-                network = null,
-                type = UpstreamType.NONE,
-                hasInternet = false,
-                displayName = "Recovering Internet..."
-            )
+    private fun isCoolingDown(
+        network: Network
+    ): Boolean {
+        val until =
+            failedUntil[network]
+            ?: return false
+
+        if (until <= System.currentTimeMillis()) {
+            failedUntil.remove(network)
+            return false
         }
+
+        return true
+    }
+
+    private fun markFailed(
+        network: Network
+    ) {
+        failedUntil[network] =
+            System.currentTimeMillis() +
+                FAILURE_COOLDOWN_MS
     }
 
     private fun scheduleRecovery() {
+        if (!started) return
+
         recoveryJob?.cancel()
 
-        recoveryJob = scope.launch {
-            var attempt = 0
+        recoveryJob =
+            scope.launch {
+                var attempt = 0
 
-            while (isActive && started && attempt < 5) {
-                attempt++
+                while (
+                    isActive &&
+                    started &&
+                    attempt < RECOVERY_MAX_ATTEMPTS
+                ) {
+                    attempt++
 
-                delay(
-                    when (attempt) {
-                        1 -> 500L
-                        2 -> 1_000L
-                        3 -> 2_000L
-                        else -> 5_000L
+                    val delayMs =
+                        when (attempt) {
+                            1 -> RECOVERY_DELAY_FIRST_MS
+                            2 -> RECOVERY_DELAY_SECOND_MS
+                            3 -> RECOVERY_DELAY_THIRD_MS
+                            else -> RECOVERY_DELAY_LATER_MS
+                        }
+
+                    delay(delayMs)
+
+                    if (!started) break
+
+                    detectCurrentNetworks()
+                    requestReselect()
+                    selectionJob?.join()
+
+                    if (
+                        _upstreamState.value.network != null &&
+                        _upstreamState.value.hasInternet
+                    ) {
+                        Log.i(
+                            TAG,
+                            "Upstream recovery succeeded on attempt $attempt"
+                        )
+                        break
                     }
-                )
 
-                detectCurrentNetworks()
-                reselect()
-
-                if (_upstreamState.value.network != null) {
-                    Log.i(
+                    Log.w(
                         TAG,
-                        "Upstream recovery selected ${_upstreamState.value.network}"
+                        "Upstream recovery attempt " +
+                            "$attempt/$RECOVERY_MAX_ATTEMPTS did not succeed"
                     )
-                    break
                 }
             }
-        }
     }
 
-    private fun publishState(newState: UpstreamState) {
-        if (newState != _upstreamState.value) {
-            Log.i(
-                TAG,
-                "Upstream changed: ${newState.displayName} (${newState.network})"
-            )
-
-            _upstreamState.value = newState
+    private fun publishState(
+        newState: UpstreamState
+    ) {
+        if (newState == _upstreamState.value) {
+            return
         }
+
+        Log.i(
+            TAG,
+            "Upstream state: ${newState.displayName} " +
+                "network=${newState.network} " +
+                "internet=${newState.hasInternet}"
+        )
+
+        _upstreamState.value = newState
     }
 
-    private fun displayNameFor(type: UpstreamType): String {
+    private fun displayNameFor(
+        type: UpstreamType
+    ): String {
         return when (type) {
-            UpstreamType.WIFI -> "Wi-Fi Internet"
-            UpstreamType.CELLULAR -> "Mobile Data Internet"
-            UpstreamType.OTHER -> "Internet Available"
-            UpstreamType.NONE -> "No Internet"
+            UpstreamType.WIFI ->
+                "Wi-Fi Internet"
+
+            UpstreamType.CELLULAR ->
+                "Mobile Data Internet"
+
+            UpstreamType.OTHER ->
+                "Internet Available"
+
+            UpstreamType.NONE ->
+                "No Internet"
         }
     }
 
@@ -383,13 +749,19 @@ class UpstreamNetworkManager(private val context: Context) {
         caps: NetworkCapabilities
     ): UpstreamType {
         return when {
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ->
+            caps.hasTransport(
+                NetworkCapabilities.TRANSPORT_WIFI
+            ) ->
                 UpstreamType.WIFI
 
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ->
+            caps.hasTransport(
+                NetworkCapabilities.TRANSPORT_CELLULAR
+            ) ->
                 UpstreamType.CELLULAR
 
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ->
+            caps.hasTransport(
+                NetworkCapabilities.TRANSPORT_ETHERNET
+            ) ->
                 UpstreamType.OTHER
 
             else ->

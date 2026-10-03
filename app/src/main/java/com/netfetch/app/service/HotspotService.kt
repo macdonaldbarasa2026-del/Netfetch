@@ -82,6 +82,7 @@ class HotspotService : Service() {
 
     private var internetMonitorJob: Job? = null
     private var upstreamMonitorJob: Job? = null
+    private var gatewayStartJob: Job? = null
 
     inner class LocalBinder : Binder() {
         fun getService(): HotspotService = this@HotspotService
@@ -213,13 +214,29 @@ class HotspotService : Service() {
         )
         wifiDirectManager?.startGroup(currentConfig)
 
-        // 6. Start the real IPv4 TUN gateway.
-        // Upstream sockets are protected and bound to the selected
-        // Wi-Fi/mobile network, so they do not loop back into the VPN.
-        startVpnGateway()
+        // 6. Wait for a selected and verified upstream before
+        // starting the real IPv4 TUN gateway.
+        gatewayStartJob?.cancel()
+        gatewayStartJob = serviceScope.launch {
+            val manager = upstreamNetworkManager
+            if (manager == null) {
+                Log.e(TAG, "Cannot start gateway: upstream manager is null")
+                return@launch
+            }
 
-        // 7. Periodic internet verification
-        startInternetMonitor()
+            manager.upstreamState.first { state ->
+                state.network != null && state.hasInternet
+            }
+
+            if (!isActive) return@launch
+
+            Log.i(TAG, "Verified upstream is ready; starting TUN gateway")
+
+            startVpnGateway()
+
+            // 7. Periodic internet verification
+            startInternetMonitor()
+        }
     }
 
     private fun startPacServer(config: HotspotConfig, gateway: String) {
@@ -265,7 +282,13 @@ class HotspotService : Service() {
 
     fun stopHotspot() {
         internetMonitorJob?.cancel()
+        internetMonitorJob = null
+
         upstreamMonitorJob?.cancel()
+        upstreamMonitorJob = null
+
+        gatewayStartJob?.cancel()
+        gatewayStartJob = null
 
         stopVpnGateway()
         stopProxyServers()
