@@ -8,12 +8,12 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
-    
+
     <!-- Location & Nearby Devices permissions for Wi-Fi Direct P2P -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission 
-        android:name="android.permission.NEARBY_WIFI_DEVICES" 
+    <uses-permission
+        android:name="android.permission.NEARBY_WIFI_DEVICES"
         android:usesPermissionFlags="neverForLocation"
         tools:targetApi="s" />
 
@@ -22,6 +22,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- VPN Service permission (required to declare VpnService subclass) -->
+    <uses-permission android:name="android.permission.BIND_VPN_SERVICE" />
 
     <application
         android:name=".NetFetchApp"
@@ -44,6 +47,7 @@
             </intent-filter>
         </activity>
 
+        <!-- HotspotService: foreground service for Wi-Fi Direct + proxy orchestration -->
         <service
             android:name=".service.HotspotService"
             android:enabled="true"

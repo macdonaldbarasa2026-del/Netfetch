@@ -21,7 +21,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -47,6 +46,8 @@ fun HomeScreen(
     val isActive = state is HotspotState.Active
     val isStarting = state is HotspotState.Starting
 
+    val activeState = state as? HotspotState.Active
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -55,7 +56,7 @@ fun HomeScreen(
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Top Header
+        // ── Top Header ──
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -117,7 +118,7 @@ fun HomeScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Normal vs Pro Mode Selector Switch Card
+        // ── Mode Selector ──
         Card(
             colors = CardDefaults.cardColors(containerColor = CardWhite),
             border = BorderStroke(1.dp, SurfaceBorder),
@@ -150,7 +151,7 @@ fun HomeScreen(
                                 color = if (selected) CardWhite else TextDark
                             )
                             Text(
-                                text = if (mode == TetherMode.NORMAL) "HTTP/HTTPS Proxy" else "SOCKS5 Unblocked Internet",
+                                text = if (mode == TetherMode.NORMAL) "HTTP/HTTPS Proxy" else "SOCKS5 TCP Tunnel",
                                 fontSize = 10.sp,
                                 color = if (selected) CreamBackground.copy(alpha = 0.8f) else TextMuted
                             )
@@ -162,7 +163,7 @@ fun HomeScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Power Toggle Button
+        // ── Power Button ──
         Box(
             modifier = Modifier
                 .size(130.dp)
@@ -186,9 +187,9 @@ fun HomeScreen(
         Spacer(modifier = Modifier.height(12.dp))
         Text(
             text = when {
-                isActive -> "Tap to Stop Hotspot"
+                isActive -> "Tap to Stop NetFetch"
                 isStarting -> "Starting Services..."
-                else -> "Tap to Start Hotspot"
+                else -> "Tap to Start NetFetch"
             },
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
@@ -197,8 +198,54 @@ fun HomeScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Speedometer Card
-        if (state is HotspotState.Active) {
+        // ── Status Dashboard (Active only) ──
+        if (activeState != null) {
+
+            // Internet & Upstream Status Card
+            val internetColor = if (activeState.internetVerified) GreenSuccess else AmberWarning
+            val internetText = if (activeState.internetVerified) "INTERNET: VERIFIED ✓" else "INTERNET: CHECKING..."
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardWhite),
+                border = BorderStroke(1.dp, internetColor),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "NETFETCH STATUS",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextMuted
+                        )
+                        Text(
+                            text = internetText,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = internetColor
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    StatusRow("Upstream", activeState.upstreamState.displayName)
+                    StatusRow("Gateway", activeState.gatewayAddress)
+                    StatusRow("HTTP Proxy", "${activeState.gatewayAddress}:${activeState.config.proxyPort}")
+                    if (activeState.config.mode == TetherMode.PRO) {
+                        StatusRow("SOCKS5", "${activeState.gatewayAddress}:${activeState.config.socksPort}")
+                    }
+                    StatusRow("PAC URL", "http://${activeState.gatewayAddress}:${activeState.config.pacPort}/wpad.dat")
+                    StatusRow("Clients", "${activeState.connectedClients.size} connected")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Speed / Devices Card
             Card(
                 colors = CardDefaults.cardColors(containerColor = CardWhite),
                 border = BorderStroke(1.dp, SurfaceBorder),
@@ -219,7 +266,7 @@ fun HomeScreen(
                             Text("Download", fontSize = 12.sp, color = TextMuted)
                         }
                         Text(
-                            text = "${state.downloadSpeedBps / 1024} KB/s",
+                            text = "${activeState.downloadSpeedBps / 1024} KB/s",
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
                             color = TextDark
@@ -235,7 +282,7 @@ fun HomeScreen(
                             Text("Upload", fontSize = 12.sp, color = TextMuted)
                         }
                         Text(
-                            text = "${state.uploadSpeedBps / 1024} KB/s",
+                            text = "${activeState.uploadSpeedBps / 1024} KB/s",
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
                             color = TextDark
@@ -254,7 +301,7 @@ fun HomeScreen(
                             Text("Devices", fontSize = 12.sp, color = TextMuted)
                         }
                         Text(
-                            text = "${state.connectedClients.size} Active",
+                            text = "${activeState.connectedClients.size} Active",
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
                             color = AmberWarning
@@ -266,7 +313,7 @@ fun HomeScreen(
             Spacer(modifier = Modifier.height(16.dp))
         }
 
-        // Hotspot & Proxy Credentials Card
+        // ── Hotspot & Proxy Credentials Card ──
         Card(
             colors = CardDefaults.cardColors(containerColor = CardWhite),
             border = BorderStroke(1.dp, SurfaceBorder),
@@ -297,20 +344,20 @@ fun HomeScreen(
 
                 CredentialItem(label = "Wi-Fi Name (SSID)", value = config.ssid, context = context)
                 CredentialItem(label = "Password", value = config.passphrase, context = context)
-                CredentialItem(label = "Proxy / Host IP", value = config.hostIp, context = context)
+                CredentialItem(label = "Proxy / Gateway IP", value = config.hostIp, context = context)
                 CredentialItem(label = "HTTP Proxy Port", value = config.proxyPort.toString(), context = context)
-                
+
                 if (config.mode == TetherMode.PRO) {
-                    CredentialItem(label = "Pro Mode SOCKS5 Port", value = config.socksPort.toString(), context = context)
+                    CredentialItem(label = "SOCKS5 Port (TCP only)", value = config.socksPort.toString(), context = context)
                 }
-                
-                CredentialItem(label = "Auto PAC URL", value = "http://${config.hostIp}:${config.pacPort}/wpad.dat", context = context)
+
+                CredentialItem(label = "PAC URL", value = "http://${config.hostIp}:${config.pacPort}/wpad.dat", context = context)
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Band Selection Card
+        // ── Band Selection Card ──
         Card(
             colors = CardDefaults.cardColors(containerColor = CardWhite),
             border = BorderStroke(1.dp, SurfaceBorder),
@@ -355,6 +402,7 @@ fun HomeScreen(
             }
         }
 
+        // ── Error Card ──
         if (state is HotspotState.Error) {
             Spacer(modifier = Modifier.height(16.dp))
             Card(
@@ -377,6 +425,20 @@ fun HomeScreen(
 }
 
 @Composable
+private fun StatusRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, fontSize = 12.sp, color = TextMuted, modifier = Modifier.weight(0.4f))
+        Text(value, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextDark, modifier = Modifier.weight(0.6f))
+    }
+}
+
+@Composable
 fun CredentialItem(label: String, value: String, context: Context) {
     Row(
         modifier = Modifier
@@ -385,7 +447,7 @@ fun CredentialItem(label: String, value: String, context: Context) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column {
+        Column(modifier = Modifier.weight(1f)) {
             Text(label, fontSize = 11.sp, color = TextMuted)
             Text(value, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextDark)
         }

@@ -1,5 +1,6 @@
 package com.netfetch.app.proxy
 
+import android.net.Network
 import android.util.Log
 import com.netfetch.app.model.ClientDevice
 import kotlinx.coroutines.*
@@ -9,8 +10,25 @@ import java.net.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
+/**
+ * SOCKS5 Proxy Server (Port 1080)
+ *
+ * Implements SOCKS5 TCP CONNECT (RFC 1928).
+ *
+ * UDP ASSOCIATE limitation:
+ *   Android does not allow a non-root process to bind a general-purpose UDP
+ *   relay socket and receive packets from arbitrary client addresses on a
+ *   Wi-Fi Direct interface. UDP ASSOCIATE is therefore not implemented.
+ *   Clients that require UDP (e.g. some games) should be informed that
+ *   TCP-only SOCKS5 is provided and that UDP traffic will not work.
+ *
+ * Outbound TCP connections are bound to the selected upstream Network when
+ * available, ensuring they route via Wi-Fi/Cellular rather than the
+ * Wi-Fi Direct group interface.
+ */
 class Socks5ProxyServer(
     private val socksPort: Int = 1080,
+    private val upstreamNetworkProvider: () -> Network? = { null },
     private val onClientActivity: (Map<String, ClientDevice>) -> Unit,
     private val onBandwidthUpdate: (uploadSpeed: Long, downloadSpeed: Long, totalBytes: Long) -> Unit
 ) {
@@ -23,16 +41,32 @@ class Socks5ProxyServer(
     private val totalUploadCounter = AtomicLong(0L)
     private val totalDownloadCounter = AtomicLong(0L)
 
+    companion object {
+        private const val SOCKS5_VERSION = 5
+        private const val AUTH_NO_AUTH = 0
+        private const val CMD_CONNECT = 1
+        private const val CMD_UDP_ASSOCIATE = 3
+        private const val ATYP_IPV4 = 1
+        private const val ATYP_DOMAIN = 3
+        private const val ATYP_IPV6 = 4
+        private const val REP_SUCCESS = 0
+        private const val REP_GENERAL_FAILURE = 1
+        private const val REP_CMD_NOT_SUPPORTED = 7
+        private const val CONNECT_TIMEOUT_MS = 15000
+        private const val READ_TIMEOUT_MS = 30000
+    }
+
     fun start() {
         if (isRunning) return
         isRunning = true
 
         proxyScope.launch {
             try {
-                serverSocket = ServerSocket(socksPort, 100, InetAddress.getByName("0.0.0.0")).apply {
+                serverSocket = ServerSocket().apply {
                     reuseAddress = true
+                    bind(InetSocketAddress(InetAddress.getByName("0.0.0.0"), socksPort), 100)
                 }
-                Log.i(TAG, "NetFetch Pro Mode SOCKS5 Server listening on port $socksPort")
+                Log.i(TAG, "NetFetch SOCKS5 Server listening on port $socksPort")
 
                 while (isRunning && !serverSocket!!.isClosed) {
                     try {
@@ -53,86 +87,120 @@ class Socks5ProxyServer(
         trackClient(clientIp)
 
         try {
-            client.soTimeout = 30000
+            client.soTimeout = READ_TIMEOUT_MS
             val input = client.getInputStream()
             val output = client.getOutputStream()
 
-            // 1. SOCKS5 Greeting / Handshake
+            // ── 1. SOCKS5 Greeting ──
             val version = input.read()
-            if (version != 5) {
+            if (version != SOCKS5_VERSION) {
+                Log.w(TAG, "Unsupported SOCKS version: $version from $clientIp")
                 client.close()
                 return
             }
 
             val nMethods = input.read()
-            if (nMethods <= 0) {
-                client.close()
-                return
-            }
+            if (nMethods <= 0) { client.close(); return }
             val methods = ByteArray(nMethods)
-            input.read(methods)
+            readFully(input, methods)
 
-            // NO AUTHENTICATION REQUIRED (0x00)
-            output.write(byteArrayOf(5, 0))
+            // We always use NO AUTH (0x00)
+            output.write(byteArrayOf(SOCKS5_VERSION.toByte(), AUTH_NO_AUTH.toByte()))
             output.flush()
 
-            // 2. SOCKS5 Request
+            // ── 2. SOCKS5 Request ──
             val reqVer = input.read()
-            val cmd = input.read() // 1 = CONNECT, 3 = UDP ASSOCIATE
-            val rsv = input.read()
+            if (reqVer != SOCKS5_VERSION) { client.close(); return }
+
+            val cmd = input.read()
+            input.read() // RSV (reserved, ignore)
             val atyp = input.read()
 
-            if (reqVer != 5) {
-                client.close()
-                return
-            }
-
             var targetHost = ""
-            var targetPort = 0
-
             when (atyp) {
-                1 -> { // IPv4 (4 bytes)
+                ATYP_IPV4 -> {
                     val ipv4 = ByteArray(4)
-                    input.read(ipv4)
+                    readFully(input, ipv4)
                     targetHost = InetAddress.getByAddress(ipv4).hostAddress ?: ""
                 }
-                3 -> { // Domain Name
+                ATYP_DOMAIN -> {
                     val domainLen = input.read()
-                    if (domainLen <= 0) {
-                        client.close()
-                        return
-                    }
+                    if (domainLen <= 0) { client.close(); return }
                     val domainBytes = ByteArray(domainLen)
-                    input.read(domainBytes)
+                    readFully(input, domainBytes)
                     targetHost = String(domainBytes, Charsets.UTF_8)
                 }
-                4 -> { // IPv6 (16 bytes)
+                ATYP_IPV6 -> {
                     val ipv6 = ByteArray(16)
-                    input.read(ipv6)
+                    readFully(input, ipv6)
                     targetHost = InetAddress.getByAddress(ipv6).hostAddress ?: ""
                 }
                 else -> {
+                    sendReply(output, REP_GENERAL_FAILURE, ATYP_IPV4, ByteArray(4), 0)
                     client.close()
                     return
                 }
             }
 
-            val portBuf = ByteArray(2)
-            input.read(portBuf)
-            targetPort = ((portBuf[0].toInt() and 0xFF) shl 8) or (portBuf[1].toInt() and 0xFF)
+            val portHigh = input.read()
+            val portLow = input.read()
+            val targetPort = ((portHigh and 0xFF) shl 8) or (portLow and 0xFF)
 
-            if (cmd == 1) { // CONNECT
-                tunnelTcp(clientIp, client, input, output, targetHost, targetPort)
-            } else {
-                // Command not supported response (0x07)
-                output.write(byteArrayOf(5, 7, 0, 1, 0, 0, 0, 0, 0, 0))
-                output.flush()
-                client.close()
+            when (cmd) {
+                CMD_CONNECT -> tunnelTcp(clientIp, client, input, output, targetHost, targetPort)
+                CMD_UDP_ASSOCIATE -> {
+                    // UDP ASSOCIATE not supported (see class-level doc)
+                    Log.w(TAG, "UDP ASSOCIATE requested by $clientIp — not supported")
+                    sendReply(output, REP_CMD_NOT_SUPPORTED, ATYP_IPV4, ByteArray(4), 0)
+                    client.close()
+                }
+                else -> {
+                    Log.w(TAG, "Unknown SOCKS5 command: $cmd from $clientIp")
+                    sendReply(output, REP_CMD_NOT_SUPPORTED, ATYP_IPV4, ByteArray(4), 0)
+                    client.close()
+                }
             }
 
         } catch (e: Exception) {
-            Log.d(TAG, "SOCKS5 client socket finished: ${e.message}")
+            Log.d(TAG, "SOCKS5 client finished ($clientIp): ${e.message}")
             try { client.close() } catch (_: Exception) {}
+        }
+    }
+
+    private fun sendReply(
+        output: OutputStream,
+        rep: Int,
+        atyp: Int,
+        bindAddr: ByteArray,
+        bindPort: Int
+    ) {
+        try {
+            val reply = ByteArray(4 + bindAddr.size + 2)
+            reply[0] = SOCKS5_VERSION.toByte()
+            reply[1] = rep.toByte()
+            reply[2] = 0 // RSV
+            reply[3] = atyp.toByte()
+            System.arraycopy(bindAddr, 0, reply, 4, bindAddr.size)
+            reply[reply.size - 2] = (bindPort shr 8).toByte()
+            reply[reply.size - 1] = bindPort.toByte()
+            output.write(reply)
+            output.flush()
+        } catch (_: Exception) {}
+    }
+
+    private fun openUpstreamSocket(host: String, port: Int): Socket {
+        val upstream = upstreamNetworkProvider()
+        return if (upstream != null) {
+            try {
+                val socket = upstream.socketFactory.createSocket()
+                socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
+                socket
+            } catch (e: Exception) {
+                Log.w(TAG, "SOCKS5 upstream network socket failed, falling back: ${e.message}")
+                Socket().apply { connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS) }
+            }
+        } else {
+            Socket().apply { connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS) }
         }
     }
 
@@ -145,23 +213,13 @@ class Socks5ProxyServer(
         port: Int
     ) {
         try {
-            val targetSocket = Socket(host, port)
-            targetSocket.soTimeout = 30000
+            val targetSocket = openUpstreamSocket(host, port)
+            targetSocket.soTimeout = READ_TIMEOUT_MS
 
-            // Send SOCKS5 Success Response (0x00)
-            val localAddr = targetSocket.localAddress.address
-            val resp = ByteArray(6 + localAddr.size)
-            resp[0] = 5 // Version
-            resp[1] = 0 // Success
-            resp[2] = 0 // Reserved
-            resp[3] = if (localAddr.size == 4) 1 else 4 // ATYP
-            System.arraycopy(localAddr, 0, resp, 4, localAddr.size)
-            val p = targetSocket.localPort
-            resp[resp.size - 2] = (p shr 8).toByte()
-            resp[resp.size - 1] = p.toByte()
-
-            clientOut.write(resp)
-            clientOut.flush()
+            // Build success reply
+            val localAddr = (targetSocket.localAddress as? Inet4Address)?.address ?: ByteArray(4)
+            val localPort = targetSocket.localPort
+            sendReply(clientOut, REP_SUCCESS, ATYP_IPV4, localAddr, localPort)
 
             val targetIn = targetSocket.getInputStream()
             val targetOut = targetSocket.getOutputStream()
@@ -178,11 +236,7 @@ class Socks5ProxyServer(
 
         } catch (e: Exception) {
             Log.d(TAG, "SOCKS5 CONNECT failed to $host:$port: ${e.message}")
-            try {
-                // Connection refused (0x05)
-                clientOut.write(byteArrayOf(5, 5, 0, 1, 0, 0, 0, 0, 0, 0))
-                clientOut.flush()
-            } catch (_: Exception) {}
+            sendReply(clientOut, REP_GENERAL_FAILURE, ATYP_IPV4, ByteArray(4), 0)
         }
     }
 
@@ -199,10 +253,19 @@ class Socks5ProxyServer(
         } catch (_: Exception) {}
     }
 
+    private fun readFully(input: InputStream, buf: ByteArray) {
+        var offset = 0
+        while (offset < buf.size) {
+            val read = input.read(buf, offset, buf.size - offset)
+            if (read < 0) throw java.io.EOFException("Stream ended unexpectedly")
+            offset += read
+        }
+    }
+
     private fun trackClient(ip: String) {
         val now = System.currentTimeMillis()
         connectedClientsMap.computeIfAbsent(ip) {
-            ClientDevice(ipAddress = ip, deviceName = "Pro Client ($ip)", connectedTimestamp = now)
+            ClientDevice(ipAddress = ip, deviceName = "SOCKS5 Client ($ip)", connectedTimestamp = now)
         }
         onClientActivity(HashMap(connectedClientsMap))
     }

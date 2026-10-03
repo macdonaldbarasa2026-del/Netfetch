@@ -16,6 +16,8 @@ import com.netfetch.app.model.ClientDevice
 import com.netfetch.app.model.HotspotConfig
 import com.netfetch.app.model.HotspotState
 import com.netfetch.app.model.TetherMode
+import com.netfetch.app.network.ConnectivityTester
+import com.netfetch.app.network.UpstreamNetworkManager
 import com.netfetch.app.network.WifiDirectManager
 import com.netfetch.app.proxy.HttpProxyServer
 import com.netfetch.app.proxy.PacServer
@@ -26,6 +28,31 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+/**
+ * HotspotService — foreground service that orchestrates the full NetFetch stack.
+ *
+ * Startup sequence:
+ *   1. Detect upstream network (Wi-Fi / Mobile Data)
+ *   2. Start Wi-Fi Direct group
+ *   3. Detect gateway address
+ *   4. Start HTTP proxy (port 8282) with upstream binding
+ *   5. Start SOCKS5 proxy (port 1080) in Pro mode with upstream binding
+ *   6. Start PAC server (port 8283)
+ *   7. Start client monitoring
+ *   8. Start internet connectivity monitoring
+ *   9. Update UI state
+ *
+ * Shutdown sequence:
+ *   1. Stop internet monitoring
+ *   2. Stop client monitoring
+ *   3. Stop PAC server
+ *   4. Stop SOCKS5
+ *   5. Stop HTTP proxy
+ *   6. Release Wi-Fi Direct group
+ *   7. Release upstream network callbacks
+ *   8. Release wake lock
+ *   9. Update UI state
+ */
 class HotspotService : Service() {
     private val TAG = "NetFetchService"
     private val CHANNEL_ID = "netfetch_hotspot_channel"
@@ -37,6 +64,7 @@ class HotspotService : Service() {
     private val _hotspotState = MutableStateFlow<HotspotState>(HotspotState.Idle)
     val hotspotState: StateFlow<HotspotState> = _hotspotState.asStateFlow()
 
+    private var upstreamNetworkManager: UpstreamNetworkManager? = null
     private var wifiDirectManager: WifiDirectManager? = null
     private var proxyServer: HttpProxyServer? = null
     private var socks5Server: Socks5ProxyServer? = null
@@ -47,6 +75,12 @@ class HotspotService : Service() {
     private var activeClients = emptyList<ClientDevice>()
     private var currentUpSpeed = 0L
     private var currentDownSpeed = 0L
+    private var currentGateway = "192.168.49.1"
+    private var currentUpstreamState = UpstreamNetworkManager.UpstreamState()
+    private var internetVerified = false
+
+    private var internetMonitorJob: Job? = null
+    private var upstreamMonitorJob: Job? = null
 
     inner class LocalBinder : Binder() {
         fun getService(): HotspotService = this@HotspotService
@@ -84,21 +118,36 @@ class HotspotService : Service() {
     fun startHotspot(config: HotspotConfig) {
         currentConfig = config
         _hotspotState.value = HotspotState.Starting
-        startForegroundServiceNotification("Starting NetFetch Hotspot...")
+        startForegroundServiceNotification("Starting NetFetch...")
 
-        // Stop existing proxy instances
-        proxyServer?.stop()
-        socks5Server?.stop()
-        pacServer?.stop()
+        // Stop existing instances cleanly
+        stopProxyServers()
 
-        // 1. HTTP/HTTPS Proxy Engine
+        // 1. Start upstream network detection
+        upstreamNetworkManager?.stop()
+        upstreamNetworkManager = UpstreamNetworkManager(this).also { it.start() }
+
+        // Monitor upstream state changes
+        upstreamMonitorJob?.cancel()
+        upstreamMonitorJob = serviceScope.launch {
+            upstreamNetworkManager?.upstreamState?.collect { upstream ->
+                currentUpstreamState = upstream
+                Log.i(TAG, "Upstream state: ${upstream.displayName}")
+                updateActiveState()
+                // Trigger internet verification on upstream change
+                verifyInternet()
+            }
+        }
+
+        // 2. Start HTTP proxy (binds to upstream network)
         proxyServer = HttpProxyServer(
             port = config.proxyPort,
+            upstreamNetworkProvider = { upstreamNetworkManager?.currentNetwork },
             onClientActivity = { clientsMap ->
                 activeClients = clientsMap.values.toList()
                 updateActiveState()
             },
-            onBandwidthUpdate = { upSpeed, downSpeed, totalBytes ->
+            onBandwidthUpdate = { upSpeed, downSpeed, _ ->
                 currentUpSpeed = upSpeed
                 currentDownSpeed = downSpeed
                 updateActiveState()
@@ -106,10 +155,11 @@ class HotspotService : Service() {
             }
         ).also { it.start() }
 
-        // 2. Pro Mode SOCKS5 Tunneling Engine
+        // 3. Start SOCKS5 in Pro mode (binds to upstream network)
         if (config.mode == TetherMode.PRO) {
             socks5Server = Socks5ProxyServer(
                 socksPort = config.socksPort,
+                upstreamNetworkProvider = { upstreamNetworkManager?.currentNetwork },
                 onClientActivity = { clientsMap ->
                     val combined = (activeClients + clientsMap.values).distinctBy { it.ipAddress }
                     activeClients = combined
@@ -119,21 +169,22 @@ class HotspotService : Service() {
             ).also { it.start() }
         }
 
-        // 3. Auto PAC Server
-        pacServer = PacServer(
-            pacPort = config.pacPort,
-            proxyHost = config.hostIp,
-            proxyPort = config.proxyPort
-        ).also { it.start() }
+        // 4. Start PAC server (initially with default gateway; updated after Wi-Fi Direct starts)
+        startPacServer(config, currentGateway)
 
-        // 4. Wi-Fi Direct Group Creation
+        // 5. Start Wi-Fi Direct group
         wifiDirectManager = WifiDirectManager(
             context = this,
-            onGroupInfoAvailable = { group, ssid, passphrase ->
+            onGroupInfoAvailable = { group, ssid, passphrase, gateway ->
+                currentGateway = gateway
                 currentConfig = currentConfig.copy(
                     ssid = ssid,
-                    passphrase = passphrase
+                    passphrase = passphrase,
+                    hostIp = gateway
                 )
+                // Restart PAC server with correct gateway address
+                pacServer?.stop()
+                startPacServer(currentConfig, gateway)
                 updateActiveState()
                 updateNotification()
             },
@@ -143,21 +194,72 @@ class HotspotService : Service() {
             }
         )
         wifiDirectManager?.startGroup(currentConfig)
+
+        // 6. Periodic internet verification
+        startInternetMonitor()
+    }
+
+    private fun startPacServer(config: HotspotConfig, gateway: String) {
+        pacServer = PacServer(
+            pacPort = config.pacPort,
+            proxyHost = gateway,
+            proxyPort = config.proxyPort
+        ).also { it.start() }
+    }
+
+    private fun startInternetMonitor() {
+        internetMonitorJob?.cancel()
+        internetMonitorJob = serviceScope.launch {
+            while (isActive) {
+                verifyInternet()
+                delay(30_000) // Re-check every 30 seconds
+            }
+        }
+    }
+
+    private fun verifyInternet() {
+        serviceScope.launch(Dispatchers.IO) {
+            val network = upstreamNetworkManager?.currentNetwork
+            val result = ConnectivityTester.testConnectivity(network)
+            if (result != internetVerified) {
+                internetVerified = result
+                Log.i(TAG, "Internet verified: $result")
+                withContext(Dispatchers.Main) {
+                    updateActiveState()
+                }
+            }
+        }
     }
 
     fun stopHotspot() {
-        wifiDirectManager?.stopGroup()
-        proxyServer?.stop()
-        socks5Server?.stop()
-        pacServer?.stop()
+        internetMonitorJob?.cancel()
+        upstreamMonitorJob?.cancel()
 
+        stopProxyServers()
+
+        wifiDirectManager?.stopGroup()
         wifiDirectManager = null
-        proxyServer = null
-        socks5Server = null
-        pacServer = null
+
+        upstreamNetworkManager?.stop()
+        upstreamNetworkManager = null
+
+        activeClients = emptyList()
+        currentUpSpeed = 0L
+        currentDownSpeed = 0L
+        internetVerified = false
+        currentGateway = "192.168.49.1"
 
         _hotspotState.value = HotspotState.Idle
         stopForeground(STOP_FOREGROUND_REMOVE)
+    }
+
+    private fun stopProxyServers() {
+        proxyServer?.stop()
+        socks5Server?.stop()
+        pacServer?.stop()
+        proxyServer = null
+        socks5Server = null
+        pacServer = null
     }
 
     private fun updateActiveState() {
@@ -165,12 +267,15 @@ class HotspotService : Service() {
             config = currentConfig,
             connectedClients = activeClients,
             downloadSpeedBps = currentDownSpeed,
-            uploadSpeedBps = currentUpSpeed
+            uploadSpeedBps = currentUpSpeed,
+            upstreamState = currentUpstreamState,
+            internetVerified = internetVerified,
+            gatewayAddress = currentGateway
         )
     }
 
     private fun startForegroundServiceNotification(title: String) {
-        val notification = buildNotification(title, "Initialising Wi-Fi Direct Network & Proxy Engine...")
+        val notification = buildNotification(title, "Initialising network & proxy engine...")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             try {
                 val serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -186,12 +291,13 @@ class HotspotService : Service() {
     }
 
     private fun updateNotification(customText: String? = null) {
-        val modeStr = if (currentConfig.mode == TetherMode.PRO) "Pro Mode" else "Normal Mode"
+        val modeStr = if (currentConfig.mode == TetherMode.PRO) "Pro" else "Normal"
         val text = customText ?: run {
             val count = activeClients.size
             val downSpeedKb = currentDownSpeed / 1024
             val upSpeedKb = currentUpSpeed / 1024
-            "[$modeStr] Connected: $count | ↓ $downSpeedKb KB/s  ↑ $upSpeedKb KB/s"
+            val internetStr = if (internetVerified) "✓ Internet" else "No Internet"
+            "[$modeStr | $internetStr] Clients: $count | ↓${downSpeedKb}KB/s ↑${upSpeedKb}KB/s"
         }
         val notification = buildNotification("NetFetch Active (${currentConfig.ssid})", text)
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -219,7 +325,7 @@ class HotspotService : Service() {
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop Hotspot", stopIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
     }
@@ -240,7 +346,10 @@ class HotspotService : Service() {
 
     private fun acquireWakeLock() {
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NetFetch::HotspotWakeLock").apply {
+        wakeLock = powerManager.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "NetFetch::HotspotWakeLock"
+        ).apply {
             acquire(12 * 60 * 60 * 1000L)
         }
     }

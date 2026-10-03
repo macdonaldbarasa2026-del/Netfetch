@@ -15,13 +15,30 @@ import android.util.Log
 import com.netfetch.app.model.BandPreference
 import com.netfetch.app.model.HotspotConfig
 import java.lang.reflect.Method
+import java.net.NetworkInterface
 
+/**
+ * Wi-Fi Direct Manager
+ *
+ * Creates and manages the Wi-Fi P2P group that other devices connect to.
+ * Reports the actual gateway address by querying the p2p network interface.
+ *
+ * Important:
+ * - Wi-Fi Direct creates a separate network interface (typically p2p0 or p2p-wlan0-*)
+ * - The group owner address is typically 192.168.49.1 on most Android devices,
+ *   but we detect it from the actual interface rather than assuming it
+ * - Not all Android devices support simultaneous Wi-Fi upstream + Wi-Fi Direct.
+ *   When not supported, the upstream reverts to mobile data.
+ */
 class WifiDirectManager(
     private val context: Context,
-    private val onGroupInfoAvailable: (WifiP2pGroup?, String, String) -> Unit,
+    private val onGroupInfoAvailable: (WifiP2pGroup?, String, String, String) -> Unit,
     private val onError: (String) -> Unit
 ) {
     private val TAG = "NetFetchP2P"
+
+    // Fallback gateway if we cannot detect the actual one
+    private val FALLBACK_GATEWAY = "192.168.49.1"
 
     private val wifiP2pManager: WifiP2pManager? =
         context.getSystemService(Context.WIFI_P2P_SERVICE) as? WifiP2pManager
@@ -44,22 +61,16 @@ class WifiDirectManager(
 
         registerReceiver()
 
-        // Remove existing group if present before creating a new one
+        // Remove existing group before creating a new one
         wifiP2pManager.removeGroup(channel, object : WifiP2pManager.ActionListener {
-            override fun onSuccess() {
-                createNewGroup(config)
-            }
-
-            override fun onFailure(reason: Int) {
-                createNewGroup(config)
-            }
+            override fun onSuccess() { createNewGroup(config) }
+            override fun onFailure(reason: Int) { createNewGroup(config) }
         })
     }
 
     @SuppressLint("MissingPermission")
     private fun createNewGroup(config: HotspotConfig) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Android 10+ (API 29+) supports custom WifiP2pConfig setting band & network name
             val p2pConfigBuilder = WifiP2pConfig.Builder()
                 .setNetworkName(config.ssid)
                 .setPassphrase(config.passphrase)
@@ -93,7 +104,6 @@ class WifiDirectManager(
 
     @SuppressLint("MissingPermission")
     private fun fallbackCreateGroup(config: HotspotConfig) {
-        // Fallback for older devices or vendor restrictions
         tryApplyBandReflection(config.bandPreference)
 
         wifiP2pManager?.createGroup(channel, object : WifiP2pManager.ActionListener {
@@ -120,14 +130,50 @@ class WifiDirectManager(
         wifiP2pManager?.requestGroupInfo(channel) { group ->
             if (group != null) {
                 currentGroup = group
-                val ssid = group.networkName
-                val passphrase = group.passphrase
-                Log.i(TAG, "Group active - SSID: $ssid, Passphrase: $passphrase")
-                onGroupInfoAvailable(group, ssid, passphrase)
+                val ssid = group.networkName ?: "DIRECT-NetFetch-AccessPoint"
+                val passphrase = group.passphrase ?: "netfetch8282"
+                val gateway = detectGatewayAddress(ssid)
+                Log.i(TAG, "Group active - SSID: $ssid, Gateway: $gateway")
+                onGroupInfoAvailable(group, ssid, passphrase, gateway)
             } else {
-                Log.w(TAG, "Group info returned null")
+                Log.w(TAG, "Group info returned null — may still be setting up")
             }
         }
+    }
+
+    /**
+     * Detect the actual gateway IP address for the Wi-Fi Direct group.
+     *
+     * On most Android devices this is 192.168.49.1 on interface p2p-wlan0-*
+     * or p2p0. We scan network interfaces to find the actual address rather
+     * than assuming. Falls back to 192.168.49.1 if not found.
+     */
+    private fun detectGatewayAddress(ssid: String): String {
+        try {
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val iface = interfaces.nextElement()
+                val name = iface.name ?: continue
+
+                // Wi-Fi Direct interfaces are typically named p2p-* or wlan1 etc.
+                if (!name.startsWith("p2p") && !name.contains("p2p")) continue
+
+                val addresses = iface.inetAddresses
+                while (addresses.hasMoreElements()) {
+                    val addr = addresses.nextElement()
+                    if (addr.isLoopbackAddress) continue
+                    if (addr is java.net.Inet4Address) {
+                        val ip = addr.hostAddress ?: continue
+                        Log.i(TAG, "Detected Wi-Fi Direct gateway: $ip on interface $name")
+                        return ip
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not detect gateway from network interfaces: ${e.message}")
+        }
+        Log.i(TAG, "Using fallback gateway address: $FALLBACK_GATEWAY")
+        return FALLBACK_GATEWAY
     }
 
     private fun tryApplyBandReflection(bandPreference: BandPreference) {
@@ -145,9 +191,8 @@ class WifiDirectManager(
             val channelFreq = if (bandPreference == BandPreference.BAND_5GHZ) 36 else 6
             setWfdInfoMethod?.invoke(wifiP2pManager, channel, 0, channelFreq, object : WifiP2pManager.ActionListener {
                 override fun onSuccess() {
-                    Log.i(TAG, "Set Wi-Fi Direct frequency channel to $channelFreq via reflection succeeded")
+                    Log.i(TAG, "Set Wi-Fi Direct frequency channel to $channelFreq via reflection")
                 }
-
                 override fun onFailure(reason: Int) {
                     Log.w(TAG, "Set Wi-Fi Direct frequency channel failed: $reason")
                 }
@@ -164,9 +209,8 @@ class WifiDirectManager(
             override fun onSuccess() {
                 Log.i(TAG, "Wi-Fi Direct group stopped successfully")
             }
-
             override fun onFailure(reason: Int) {
-                Log.w(TAG, "Failed to remove group: $reason")
+                Log.w(TAG, "Failed to remove Wi-Fi Direct group: $reason")
             }
         })
         currentGroup = null
@@ -191,6 +235,7 @@ class WifiDirectManager(
                     }
 
                     WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> {
+                        @Suppress("DEPRECATION")
                         val networkInfo = intent.getParcelableExtra<NetworkInfo>(WifiP2pManager.EXTRA_NETWORK_INFO)
                         if (networkInfo?.isConnected == true) {
                             fetchGroupDetails()
@@ -204,9 +249,7 @@ class WifiDirectManager(
 
     private fun unregisterReceiver() {
         receiver?.let {
-            try {
-                context.unregisterReceiver(it)
-            } catch (_: Exception) {}
+            try { context.unregisterReceiver(it) } catch (_: Exception) {}
             receiver = null
         }
     }

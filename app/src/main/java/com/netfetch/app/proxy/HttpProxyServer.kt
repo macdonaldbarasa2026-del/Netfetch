@@ -1,18 +1,33 @@
 package com.netfetch.app.proxy
 
+import android.net.Network
 import android.util.Log
 import com.netfetch.app.model.ClientDevice
 import kotlinx.coroutines.*
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
+/**
+ * HTTP/HTTPS Proxy Server (Port 8282)
+ *
+ * Handles both plain HTTP requests and HTTPS CONNECT tunnelling.
+ * Outbound connections are bound to the upstream Network object when
+ * provided, ensuring traffic routes via Wi-Fi/Mobile-Data rather than
+ * the Wi-Fi Direct interface.
+ *
+ * Architecture note: This is a proxy, not a transparent NAT gateway.
+ * Client devices must configure their HTTP proxy to point at this server.
+ * Root is not required.
+ */
 class HttpProxyServer(
     private val port: Int = 8282,
+    private val upstreamNetworkProvider: () -> Network? = { null },
     private val onClientActivity: (Map<String, ClientDevice>) -> Unit,
     private val onBandwidthUpdate: (uploadSpeed: Long, downloadSpeed: Long, totalBytes: Long) -> Unit
 ) {
@@ -30,16 +45,23 @@ class HttpProxyServer(
 
     private var speedMonitorJob: Job? = null
 
+    companion object {
+        private const val CONNECT_TIMEOUT_MS = 15000
+        private const val READ_TIMEOUT_MS = 30000
+        private const val MAX_CONCURRENT_CLIENTS = 50
+    }
+
     fun start() {
         if (isRunning) return
         isRunning = true
 
         proxyScope.launch {
             try {
-                serverSocket = ServerSocket(port, 100, InetAddress.getByName("0.0.0.0")).apply {
+                serverSocket = ServerSocket().apply {
                     reuseAddress = true
+                    bind(InetSocketAddress(InetAddress.getByName("0.0.0.0"), port), 100)
                 }
-                Log.i(TAG, "NetFetch Proxy Engine listening on port $port")
+                Log.i(TAG, "NetFetch HTTP Proxy listening on port $port")
 
                 startSpeedMonitor()
 
@@ -62,17 +84,17 @@ class HttpProxyServer(
     }
 
     private fun handleClientSocket(clientSocket: Socket) {
-        val clientIp = clientSocket.inetAddress.hostAddress ?: "Unknown"
+        val clientIp = clientSocket.inetAddress?.hostAddress ?: "Unknown"
         trackClientConnection(clientIp)
 
         try {
-            clientSocket.soTimeout = 30000
+            clientSocket.soTimeout = READ_TIMEOUT_MS
             val clientIn = clientSocket.getInputStream()
             val clientOut = clientSocket.getOutputStream()
 
             val headerLines = mutableListOf<String>()
             val reader = clientIn.bufferedReader(Charsets.ISO_8859_1)
-            var firstLine: String? = null
+            var firstLine: String?
 
             try {
                 firstLine = reader.readLine()
@@ -94,7 +116,7 @@ class HttpProxyServer(
             }
 
             val parts = firstLine.split(" ")
-            if (parts.size < 3) {
+            if (parts.size < 2) {
                 clientSocket.close()
                 return
             }
@@ -103,14 +125,11 @@ class HttpProxyServer(
             val target = parts[1]
 
             if (method.equals("CONNECT", ignoreCase = true)) {
-                // HTTPS Tunneling (CONNECT target:port HTTP/1.1)
-                val targetParts = target.split(":")
-                val host = targetParts[0]
-                val targetPort = if (targetParts.size > 1) targetParts[1].toIntOrNull() ?: 443 else 443
-
+                val colonIdx = target.lastIndexOf(':')
+                val host = if (colonIdx > 0) target.substring(0, colonIdx) else target
+                val targetPort = if (colonIdx > 0) target.substring(colonIdx + 1).toIntOrNull() ?: 443 else 443
                 tunnelHttps(clientIp, clientSocket, clientIn, clientOut, host, targetPort)
             } else {
-                // Direct HTTP Request
                 tunnelHttp(clientIp, clientSocket, clientIn, clientOut, method, target, headerLines)
             }
 
@@ -118,6 +137,27 @@ class HttpProxyServer(
             Log.d(TAG, "Client socket handler finished ($clientIp): ${e.message}")
         } finally {
             try { clientSocket.close() } catch (_: Exception) {}
+        }
+    }
+
+    private fun openUpstreamSocket(host: String, port: Int): Socket {
+        val upstream = upstreamNetworkProvider()
+        return if (upstream != null) {
+            try {
+                val socket = upstream.socketFactory.createSocket()
+                socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
+                socket
+            } catch (e: Exception) {
+                Log.w(TAG, "Upstream network socket failed, falling back: ${e.message}")
+                // Fall back to default routing
+                Socket().apply {
+                    connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
+                }
+            }
+        } else {
+            Socket().apply {
+                connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
+            }
         }
     }
 
@@ -130,10 +170,9 @@ class HttpProxyServer(
         port: Int
     ) {
         try {
-            val targetSocket = Socket(host, port)
-            targetSocket.soTimeout = 30000
+            val targetSocket = openUpstreamSocket(host, port)
+            targetSocket.soTimeout = READ_TIMEOUT_MS
 
-            // Respond 200 Connection Established
             val okResponse = "HTTP/1.1 200 Connection Established\r\nProxy-Agent: NetFetch/1.0\r\n\r\n"
             clientOut.write(okResponse.toByteArray(Charsets.ISO_8859_1))
             clientOut.flush()
@@ -154,7 +193,7 @@ class HttpProxyServer(
         } catch (e: Exception) {
             Log.d(TAG, "HTTPS CONNECT tunnel error for $host:$port -> ${e.message}")
             try {
-                val errResponse = "HTTP/1.1 502 Bad Gateway\r\n\r\n"
+                val errResponse = "HTTP/1.1 502 Bad Gateway\r\nProxy-Agent: NetFetch/1.0\r\n\r\n"
                 clientOut.write(errResponse.toByteArray(Charsets.ISO_8859_1))
                 clientOut.flush()
             } catch (_: Exception) {}
@@ -174,6 +213,7 @@ class HttpProxyServer(
             var host = ""
             var port = 80
 
+            // Extract host from Host header first
             for (h in headerLines) {
                 if (h.startsWith("Host:", ignoreCase = true)) {
                     val hostVal = h.substring(5).trim()
@@ -188,6 +228,7 @@ class HttpProxyServer(
                 }
             }
 
+            // Fall back to parsing the URL
             if (host.isEmpty()) {
                 val cleanUrl = if (targetUrl.startsWith("http://")) targetUrl.substring(7) else targetUrl
                 val slashIdx = cleanUrl.indexOf("/")
@@ -206,13 +247,13 @@ class HttpProxyServer(
                 return
             }
 
-            val targetSocket = Socket(host, port)
-            targetSocket.soTimeout = 30000
+            val targetSocket = openUpstreamSocket(host, port)
+            targetSocket.soTimeout = READ_TIMEOUT_MS
 
             val targetOut = targetSocket.getOutputStream()
             val targetIn = targetSocket.getInputStream()
 
-            // Rewrite request first line if absolute URL
+            // Rewrite absolute URL to relative path
             val path = if (targetUrl.startsWith("http://")) {
                 val afterProto = targetUrl.substring(7)
                 val slashIdx = afterProto.indexOf("/")
@@ -221,14 +262,17 @@ class HttpProxyServer(
                 targetUrl
             }
 
-            val rewrittenFirstLine = "$method $path HTTP/1.1\r\n"
+            // Reconstruct HTTP/1.1 request (strip Proxy-* headers)
+            val requestVersion = if (headerLines.isNotEmpty() && headerLines[0].endsWith("HTTP/1.0")) "HTTP/1.0" else "HTTP/1.1"
+            val rewrittenFirstLine = "$method $path $requestVersion\r\n"
             targetOut.write(rewrittenFirstLine.toByteArray(Charsets.ISO_8859_1))
             recordBytes(clientIp, rewrittenFirstLine.length.toLong(), isUpload = true)
 
             for (i in 1 until headerLines.size) {
-                val line = headerLines[i]
-                if (!line.startsWith("Proxy-Connection", ignoreCase = true)) {
-                    val lineBytes = (line + "\r\n").toByteArray(Charsets.ISO_8859_1)
+                val lineStr = headerLines[i]
+                if (!lineStr.startsWith("Proxy-Connection", ignoreCase = true) &&
+                    !lineStr.startsWith("Proxy-Authorization", ignoreCase = true)) {
+                    val lineBytes = (lineStr + "\r\n").toByteArray(Charsets.ISO_8859_1)
                     targetOut.write(lineBytes)
                     recordBytes(clientIp, lineBytes.size.toLong(), isUpload = true)
                 }
@@ -247,7 +291,12 @@ class HttpProxyServer(
             try { targetSocket.close() } catch (_: Exception) {}
 
         } catch (e: Exception) {
-            Log.d(TAG, "HTTP Tunnel error -> ${e.message}")
+            Log.d(TAG, "HTTP tunnel error -> ${e.message}")
+            try {
+                val errResponse = "HTTP/1.1 502 Bad Gateway\r\nProxy-Agent: NetFetch/1.0\r\n\r\n"
+                clientOut.write(errResponse.toByteArray(Charsets.ISO_8859_1))
+                clientOut.flush()
+            } catch (_: Exception) {}
         }
     }
 
@@ -261,7 +310,7 @@ class HttpProxyServer(
                 recordBytes(clientIp, read.toLong(), isUpload)
             }
         } catch (_: Exception) {
-            // Socket closed or reset
+            // Connection closed or reset — normal termination
         }
     }
 
@@ -304,8 +353,8 @@ class HttpProxyServer(
 
     private fun resolveDeviceName(ip: String): String {
         return when {
-            ip.endsWith(".1") -> "Host Device ($ip)"
-            ip.startsWith("192.168.49.") -> "Client Device (${ip.substringAfterLast('.')})"
+            ip.startsWith("192.168.49.") -> "Client (${ip.substringAfterLast('.')})"
+            ip.startsWith("192.168.") -> "Client ($ip)"
             else -> "Client ($ip)"
         }
     }
