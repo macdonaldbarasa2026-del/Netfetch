@@ -1,5 +1,6 @@
 package com.netfetch.app.network
 
+import com.netfetch.app.model.ClientDevice
 import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -188,6 +189,16 @@ class WifiDirectManager(
                     ssid,
                     passphrase,
                     gateway
+                )
+
+                onClientsChanged(
+                    group.clientList.map { device ->
+                        ClientDevice(
+                            ipAddress = "Pending proxy traffic",
+                            macAddress = device.deviceAddress ?: "Unknown MAC",
+                            deviceName = device.deviceName ?: "Wi-Fi Direct Client"
+                        )
+                    }
                 )
             } else {
                 retryGroupInfo()

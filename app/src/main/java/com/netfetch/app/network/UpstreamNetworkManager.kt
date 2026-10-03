@@ -598,10 +598,37 @@ class UpstreamNetworkManager(private val context: Context) {
     private suspend fun validateNetwork(
         network: Network
     ): Boolean {
-        if (!isNetworkCandidate(network)) {
+        val caps =
+            connectivityManager.getNetworkCapabilities(network)
+                ?: return false
+
+        if (!isCandidate(caps)) {
             return false
         }
 
+        /*
+         * Android's VALIDATED capability means the framework has already
+         * successfully validated real Internet access on this exact network.
+         *
+         * Do not reject a working Wi-Fi connection just because one of our
+         * own probe URLs is unavailable, filtered, redirected, or slow.
+         */
+        if (
+            caps.hasCapability(
+                NetworkCapabilities.NET_CAPABILITY_VALIDATED
+            )
+        ) {
+            Log.i(
+                TAG,
+                "Android reports upstream VALIDATED: $network"
+            )
+            return true
+        }
+
+        /*
+         * If Android has not validated the network yet, perform our own
+         * reachability test as a fallback.
+         */
         return try {
             kotlinx.coroutines.withTimeout(
                 VALIDATION_TIMEOUT_MS

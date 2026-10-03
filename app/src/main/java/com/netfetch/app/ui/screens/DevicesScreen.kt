@@ -268,11 +268,24 @@ fun ClientDeviceCard(client: ClientDevice, context: Context) {
                     color = TextDark
                 )
                 Text(
-                    text = "IP: ${client.ipAddress}",
+                    text = if (client.ipAddress == "Awaiting IP") {
+                        "IP: awaiting network traffic"
+                    } else {
+                        "IP: ${client.ipAddress}"
+                    },
                     fontSize = 13.sp,
                     color = PrimaryBlack,
                     fontWeight = FontWeight.Medium
                 )
+
+                if (client.macAddress != "Unknown MAC") {
+                    Text(
+                        text = "MAC: ${client.macAddress}",
+                        fontSize = 11.sp,
+                        color = TextMuted
+                    )
+                }
+
                 Text(
                     text = "Connected since $connectedTimeStr",
                     fontSize = 11.sp,
