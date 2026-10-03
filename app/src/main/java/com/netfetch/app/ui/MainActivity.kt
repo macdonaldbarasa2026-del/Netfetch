@@ -216,6 +216,7 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         NetfetchWatermark()
+                        }
                     }
                 ) { innerPadding ->
                     NavHost(
