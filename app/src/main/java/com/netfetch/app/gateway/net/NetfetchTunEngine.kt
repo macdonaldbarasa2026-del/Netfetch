@@ -24,8 +24,14 @@ class NetfetchTunEngine(
     private var readerThread: Thread? = null
     private var writerThread: Thread? = null
 
+    /*
+     * Bounded TUN output queue.
+     *
+     * Keep memory bounded without silently dropping packets when the
+     * TUN writer is temporarily behind.
+     */
     private val writeQueue =
-        java.util.concurrent.LinkedBlockingQueue<ByteArray>(1024)
+        java.util.concurrent.ArrayBlockingQueue<ByteArray>(512)
 
     private val tcpEngine =
         NetfetchTcpEngine(
@@ -164,8 +170,25 @@ class NetfetchTunEngine(
             return
         }
 
-        // Never allow a slow client to exhaust gateway memory.
-        writeQueue.offer(packet)
+        /*
+         * Apply bounded backpressure instead of silently dropping packets.
+         * The queue remains strictly bounded.
+         */
+        while (running.get()) {
+            try {
+                if (writeQueue.offer(
+                        packet,
+                        100,
+                        java.util.concurrent.TimeUnit.MILLISECONDS
+                    )
+                ) {
+                    return
+                }
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return
+            }
+        }
     }
 
     private fun writeLoop() {

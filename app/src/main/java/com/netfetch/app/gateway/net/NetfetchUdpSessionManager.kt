@@ -117,18 +117,24 @@ class NetfetchUdpSessionManager(
     ): Boolean {
         val session = sessions[key] ?: return false
 
-        return try {
-            val packet = DatagramPacket(
-                data,
-                data.size
-            )
-
-            session.socket.send(packet)
-            true
-        } catch (_: Exception) {
-            close(key)
-            false
+        /*
+         * Dispatch the send on Dispatchers.IO rather than the caller's thread
+         * (which is the TUN packet reader). A slow or blocked upstream socket
+         * must not stall the entire TUN reader.
+         *
+         * Fire-and-forget is acceptable for UDP: if the upstream is so slow
+         * that it cannot keep up, the DatagramSocket's send buffer fills and
+         * send() will throw, which closes the session.
+         */
+        scope.launch {
+            try {
+                session.socket.send(DatagramPacket(data, data.size))
+            } catch (_: Exception) {
+                close(key)
+            }
         }
+
+        return true
     }
 
     fun close(key: UdpFlowKey) {

@@ -169,13 +169,28 @@ class MainActivity : ComponentActivity() {
 
                     when (receiverState) {
                         is NetfetchReceiverState.Connected -> {
-                            requestReceiverVpn(receiverState)
+                            if (receiverState.providerMode ==
+                                com.netfetch.app.netfetchlink.NetfetchLinkProtocol.MODE_PRO
+                            ) {
+                                // Pro mode: receiver needs VPN to tunnel all traffic
+                                // through the provider's SOCKS5 server.
+                                requestReceiverVpn(receiverState)
+                            } else {
+                                // Normal mode: no VPN needed. The UI shows the
+                                // provider's HTTP proxy / PAC details and the user
+                                // or OS configures the system proxy accordingly.
+                                // Stop any previously running receiver VPN.
+                                stopReceiverVpn()
+                            }
                         }
 
                         NetfetchReceiverState.Idle,
                         NetfetchReceiverState.Searching,
                         is NetfetchReceiverState.ProviderFound,
                         NetfetchReceiverState.Connecting,
+                        NetfetchReceiverState.Authenticating,
+                        is NetfetchReceiverState.Reconnecting,
+                        is NetfetchReceiverState.Unsupported,
                         is NetfetchReceiverState.Error -> {
                             stopReceiverVpn()
                         }
@@ -393,14 +408,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startReceiverDiscovery() {
-        if (configStateFlow.value.mode != TetherMode.PRO) {
-            receiverStateFlow.value =
-                NetfetchReceiverState.Error(
-                    "NetFetch receiver requires Pro Mode."
-                )
-            return
-        }
-
         receiverLink?.stop()
         receiverStateFlow.value = NetfetchReceiverState.Searching
         receiverLink?.start()

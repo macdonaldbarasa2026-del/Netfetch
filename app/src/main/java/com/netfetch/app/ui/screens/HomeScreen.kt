@@ -3,6 +3,7 @@ package com.netfetch.app.ui.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
@@ -204,15 +205,15 @@ fun HomeScreen(
         Spacer(modifier = Modifier.height(24.dp))
 
         // ── NetFetch-to-NetFetch Receiver ──
-        if (config.mode == TetherMode.PRO) {
-            NetfetchReceiverCard(
-                state = receiverState,
-                onStart = onStartReceiver,
-                onStop = onStopReceiver
-            )
+        // Available in BOTH Normal and Pro modes.
+        NetfetchReceiverCard(
+            state = receiverState,
+            onStart = onStartReceiver,
+            onStop = onStopReceiver
+        )
 
-            Spacer(modifier = Modifier.height(8.dp))
-        }
+        Spacer(modifier = Modifier.height(8.dp))
+
 
         // ── Status Dashboard (Active only) ──
         if (activeState != null) {
@@ -346,7 +347,8 @@ fun HomeScreen(
                         text = "Hotspot & Proxy Credentials",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
-                        color = PrimaryBlack
+                        color = PrimaryBlack,
+                        modifier = Modifier.weight(1f)
                     )
                     Text(
                         text = config.mode.displayName,
@@ -354,6 +356,38 @@ fun HomeScreen(
                         fontWeight = FontWeight.Bold,
                         color = GreenSuccess
                     )
+                    IconButton(
+                        onClick = {
+                            val sb = StringBuilder()
+                            sb.appendLine("NetFetch Connection Details")
+                            sb.appendLine("Wi-Fi Name: ${config.ssid}")
+                            sb.appendLine("Wi-Fi Password: ${config.passphrase}")
+                            sb.appendLine("Proxy IP: ${config.hostIp}")
+                            sb.appendLine("HTTP Proxy Port: ${config.proxyPort}")
+                            sb.appendLine("PAC URL: http://${config.hostIp}:${config.pacPort}/wpad.dat")
+                            if (config.mode == TetherMode.PRO) {
+                                sb.appendLine("SOCKS5 Port: ${config.socksPort}")
+                                sb.appendLine("SOCKS5 Username: ${config.socksUsername}")
+                                sb.appendLine("SOCKS5 Password: ${config.socksPassword}")
+                            }
+                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_SUBJECT, "NetFetch Connection Details")
+                                putExtra(Intent.EXTRA_TEXT, sb.toString().trim())
+                            }
+                            context.startActivity(
+                                Intent.createChooser(shareIntent, "Share Connection Details")
+                            )
+                        },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Share,
+                            contentDescription = "Share credentials",
+                            tint = PrimaryBlack,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -479,7 +513,7 @@ private fun NetfetchReceiverCard(
             )
 
             Text(
-                text = "Connect this phone to another NetFetch Pro provider automatically. No manual proxy settings are required.",
+                text = "Connect to a nearby NetFetch provider automatically — Normal (HTTP/PAC) or Pro (SOCKS5 tunnel). No manual settings required.",
                 fontSize = 12.sp,
                 color = TextMuted
             )
@@ -494,30 +528,59 @@ private fun NetfetchReceiverCard(
 
                 NetfetchReceiverState.Searching -> {
                     ReceiverStatusText(
-                        text = "Searching for a NetFetch Pro provider..."
+                        text = "Searching for a nearby NetFetch provider..."
                     )
                 }
 
                 is NetfetchReceiverState.ProviderFound -> {
+                    val modeLabel = if (state.providerMode == "PRO") "Pro" else "Normal"
                     ReceiverStatusText(
-                        text = "Provider found: ${state.deviceName}\nConnecting..."
+                        text = "Provider found: ${state.deviceName} [$modeLabel]\nConnecting..."
                     )
                 }
 
                 NetfetchReceiverState.Connecting -> {
-                    ReceiverStatusText(
-                        text = "Connecting to NetFetch provider..."
-                    )
+                    ReceiverStatusText(text = "Connecting to NetFetch provider...")
+                }
+
+                NetfetchReceiverState.Authenticating -> {
+                    ReceiverStatusText(text = "Authenticating with provider...")
                 }
 
                 is NetfetchReceiverState.Connected -> {
+                    val modeLabel = if (state.providerMode == "PRO") "Pro" else "Normal"
+                    val transportLabel = if (state.providerMode == "PRO") {
+                        "SOCKS5 VPN tunnel active"
+                    } else {
+                        "HTTP proxy: ${state.providerAddress}:${state.httpPort}\nPAC: http://${state.providerAddress}:${state.pacPort}/wpad.dat"
+                    }
+
                     ReceiverStatusText(
-                        text = "Connected to ${state.providerAddress}\nSecure session active"
+                        text = "Connected [$modeLabel] — ${state.providerAddress}\n$transportLabel"
                     )
 
                     ReceiverActionButton(
                         text = "Disconnect",
                         onClick = onStop
+                    )
+                }
+
+                is NetfetchReceiverState.Unsupported -> {
+                    Text(
+                        text = "Unsupported provider: ${state.reason}",
+                        fontSize = 12.sp,
+                        color = AmberWarning
+                    )
+
+                    ReceiverActionButton(
+                        text = "Try Again",
+                        onClick = onStart
+                    )
+                }
+
+                is NetfetchReceiverState.Reconnecting -> {
+                    ReceiverStatusText(
+                        text = "Reconnecting... ${state.reason}"
                     )
                 }
 

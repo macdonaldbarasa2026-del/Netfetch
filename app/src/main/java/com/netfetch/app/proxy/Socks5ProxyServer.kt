@@ -41,8 +41,12 @@ class Socks5ProxyServer(
     private val proxyScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private val connectedClientsMap = ConcurrentHashMap<String, ClientDevice>()
+    private val clientUploadBytes = ConcurrentHashMap<String, AtomicLong>()
+    private val clientDownloadBytes = ConcurrentHashMap<String, AtomicLong>()
     private val totalUploadCounter = AtomicLong(0L)
     private val totalDownloadCounter = AtomicLong(0L)
+    private var speedMonitorJob: Job? = null
+    private val clientSemaphore = kotlinx.coroutines.sync.Semaphore(50)
 
     companion object {
         private const val SOCKS5_VERSION = 5
@@ -68,6 +72,8 @@ class Socks5ProxyServer(
         if (isRunning) return
         isRunning = true
 
+        startSpeedMonitor()
+
         proxyScope.launch {
             try {
                 serverSocket = ServerSocket().apply {
@@ -79,7 +85,18 @@ class Socks5ProxyServer(
                 while (isRunning && !serverSocket!!.isClosed) {
                     try {
                         val client = serverSocket!!.accept()
-                        proxyScope.launch { handleSocksClient(client) }
+                        proxyScope.launch {
+                            if (!clientSemaphore.tryAcquire()) {
+                                Log.w(TAG, "SOCKS5 client concurrency limit reached; rejecting connection")
+                                runCatching { client.close() }
+                                return@launch
+                            }
+                            try {
+                                handleSocksClient(client)
+                            } finally {
+                                clientSemaphore.release()
+                            }
+                        }
                     } catch (e: Exception) {
                         if (isRunning) Log.e(TAG, "Error accepting SOCKS5 connection: ${e.message}")
                     }
@@ -262,12 +279,7 @@ class Socks5ProxyServer(
 
             when (cmd) {
                 CMD_CONNECT -> tunnelTcp(clientIp, client, input, output, targetHost, targetPort)
-                CMD_UDP_ASSOCIATE -> {
-                    // UDP ASSOCIATE not supported (see class-level doc)
-                    Log.w(TAG, "UDP ASSOCIATE requested by $clientIp — not supported")
-                    sendReply(output, REP_CMD_NOT_SUPPORTED, ATYP_IPV4, ByteArray(4), 0)
-                    client.close()
-                }
+                CMD_UDP_ASSOCIATE -> handleUdpAssociate(clientIp, client, input, output)
                 else -> {
                     Log.w(TAG, "Unknown SOCKS5 command: $cmd from $clientIp")
                     sendReply(output, REP_CMD_NOT_SUPPORTED, ATYP_IPV4, ByteArray(4), 0)
@@ -328,6 +340,10 @@ class Socks5ProxyServer(
 
             try {
                 socket = upstream.socketFactory.createSocket()
+
+                if (!com.netfetch.app.network.NetfetchUpstreamRuntime.protect(socket)) {
+                    throw java.io.IOException("Unable to protect upstream SOCKS socket")
+                }
 
                 socket.connect(
                     InetSocketAddress(address, port),
@@ -453,39 +469,37 @@ class Socks5ProxyServer(
         }
     }
 
+    private suspend fun handleUdpAssociate(
+        clientIp: String,
+        clientSocket: Socket,
+        clientIn: InputStream,
+        clientOut: OutputStream
+    ) {
+        // Android does not allow a non-root process to bind a UDP relay socket
+        // on the Wi-Fi Direct group interface and receive datagrams from arbitrary
+        // peer addresses. Real UDP ASSOCIATE is therefore not implemented here.
+        // Return REP_CMD_NOT_SUPPORTED so clients fail fast rather than silently
+        // dropping packets through a fake success path.
+        Log.d(TAG, "SOCKS5 UDP ASSOCIATE rejected (not supported): $clientIp")
+        sendReply(clientOut, REP_CMD_NOT_SUPPORTED, ATYP_IPV4, ByteArray(4), 0)
+        runCatching { clientSocket.close() }
+    }
+
     private fun pipeStreams(clientIp: String, input: InputStream, output: OutputStream, isUpload: Boolean) {
-        val buffer = ByteArray(8192)
+        val buffer = ByteArray(64 * 1024)
         try {
             var read: Int
             while (input.read(buffer).also { read = it } != -1) {
                 output.write(buffer, 0, read)
-                output.flush()
                 val amount = read.toLong()
 
                 if (isUpload) {
                     totalUploadCounter.addAndGet(amount)
+                    clientUploadBytes[clientIp]?.addAndGet(amount)
                 } else {
                     totalDownloadCounter.addAndGet(amount)
+                    clientDownloadBytes[clientIp]?.addAndGet(amount)
                 }
-
-                connectedClientsMap.computeIfPresent(clientIp) { _, existing ->
-                    if (isUpload) {
-                        existing.copy(
-                            bytesUploaded = existing.bytesUploaded + amount
-                        )
-                    } else {
-                        existing.copy(
-                            bytesDownloaded = existing.bytesDownloaded + amount
-                        )
-                    }
-                }
-
-                onClientActivity(HashMap(connectedClientsMap))
-                onBandwidthUpdate(
-                    totalUploadCounter.get(),
-                    totalDownloadCounter.get(),
-                    totalUploadCounter.get() + totalDownloadCounter.get()
-                )
             }
         } catch (_: Exception) {}
     }
@@ -501,14 +515,50 @@ class Socks5ProxyServer(
 
     private fun trackClient(ip: String) {
         val now = System.currentTimeMillis()
+        clientUploadBytes.putIfAbsent(ip, AtomicLong(0L))
+        clientDownloadBytes.putIfAbsent(ip, AtomicLong(0L))
         connectedClientsMap.computeIfAbsent(ip) {
             ClientDevice(ipAddress = ip, deviceName = "SOCKS5 Client ($ip)", connectedTimestamp = now)
         }
-        onClientActivity(HashMap(connectedClientsMap))
+    }
+
+    private fun startSpeedMonitor() {
+        speedMonitorJob?.cancel()
+        speedMonitorJob = proxyScope.launch {
+            var lastUp = totalUploadCounter.get()
+            var lastDown = totalDownloadCounter.get()
+
+            while (isRunning) {
+                delay(1000)
+                val currUp = totalUploadCounter.get()
+                val currDown = totalDownloadCounter.get()
+
+                val upSpeed = currUp - lastUp
+                val downSpeed = currDown - lastDown
+
+                lastUp = currUp
+                lastDown = currDown
+
+                for ((ip, client) in connectedClientsMap) {
+                    val up = clientUploadBytes[ip]?.get() ?: 0L
+                    val down = clientDownloadBytes[ip]?.get() ?: 0L
+                    if (client.bytesUploaded != up || client.bytesDownloaded != down) {
+                        connectedClientsMap[ip] = client.copy(
+                            bytesUploaded = up,
+                            bytesDownloaded = down
+                        )
+                    }
+                }
+
+                onBandwidthUpdate(upSpeed, downSpeed, currUp + currDown)
+                onClientActivity(HashMap(connectedClientsMap))
+            }
+        }
     }
 
     fun stop() {
         isRunning = false
+        speedMonitorJob?.cancel()
         try { serverSocket?.close() } catch (_: Exception) {}
         proxyScope.cancel()
     }

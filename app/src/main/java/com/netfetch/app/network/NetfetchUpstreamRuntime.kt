@@ -32,6 +32,28 @@ object NetfetchUpstreamRuntime {
     fun state(): StateFlow<UpstreamNetworkManager.UpstreamState>? =
         manager?.upstreamState
 
+    @Volatile
+    private var socketProtector: ((java.net.Socket) -> Boolean)? = null
+
+    @Volatile
+    private var datagramSocketProtector: ((java.net.DatagramSocket) -> Boolean)? = null
+
+    fun setSocketProtector(protector: ((java.net.Socket) -> Boolean)?) {
+        socketProtector = protector
+    }
+
+    fun setDatagramSocketProtector(protector: ((java.net.DatagramSocket) -> Boolean)?) {
+        datagramSocketProtector = protector
+    }
+
+    fun protect(socket: java.net.Socket): Boolean {
+        return socketProtector?.invoke(socket) ?: true
+    }
+
+    fun protect(socket: java.net.DatagramSocket): Boolean {
+        return datagramSocketProtector?.invoke(socket) ?: true
+    }
+
     fun stop(owner: UpstreamNetworkManager? = null) {
         synchronized(this) {
             val current = manager ?: return
@@ -42,6 +64,8 @@ object NetfetchUpstreamRuntime {
 
             current.stop()
             manager = null
+            socketProtector = null
+            datagramSocketProtector = null
         }
     }
 }

@@ -45,6 +45,13 @@ class HttpProxyServer(
 
     private var speedMonitorJob: Job? = null
 
+    /**
+     * Bounds the number of simultaneous HTTP/HTTPS proxy tunnels.
+     * Prevents unbounded thread/coroutine creation when many clients connect.
+     */
+    private val clientSemaphore =
+        kotlinx.coroutines.sync.Semaphore(MAX_CONCURRENT_CLIENTS)
+
     companion object {
         private const val CONNECT_TIMEOUT_MS = 15000
         private const val READ_TIMEOUT_MS = 30000
@@ -69,7 +76,16 @@ class HttpProxyServer(
                     try {
                         val clientSocket = serverSocket!!.accept()
                         proxyScope.launch {
-                            handleClientSocket(clientSocket)
+                            if (!clientSemaphore.tryAcquire()) {
+                                Log.w(TAG, "HTTP proxy client concurrency limit reached; rejecting connection")
+                                runCatching { clientSocket.close() }
+                                return@launch
+                            }
+                            try {
+                                handleClientSocket(clientSocket)
+                            } finally {
+                                clientSemaphore.release()
+                            }
                         }
                     } catch (e: Exception) {
                         if (isRunning) {
@@ -83,7 +99,7 @@ class HttpProxyServer(
         }
     }
 
-    private fun handleClientSocket(clientSocket: Socket) {
+    private suspend fun handleClientSocket(clientSocket: Socket) {
         val clientIp = clientSocket.inetAddress?.hostAddress ?: "Unknown"
         trackClientConnection(clientIp)
 
@@ -230,6 +246,10 @@ class HttpProxyServer(
                 try {
                     val socket = upstream.socketFactory.createSocket()
 
+                    if (!com.netfetch.app.network.NetfetchUpstreamRuntime.protect(socket)) {
+                        throw java.io.IOException("Unable to protect upstream HTTP proxy socket")
+                    }
+
                     socket.connect(
                         InetSocketAddress(address, port),
                         CONNECT_TIMEOUT_MS
@@ -272,7 +292,7 @@ class HttpProxyServer(
         }
     }
 
-    private fun tunnelHttps(
+    private suspend fun tunnelHttps(
         clientIp: String,
         clientSocket: Socket,
         clientIn: InputStream,
@@ -294,45 +314,34 @@ class HttpProxyServer(
             val targetIn = targetSocket.getInputStream()
             val targetOut = targetSocket.getOutputStream()
 
-            val job1 = proxyScope.launch {
-                pipeStreams(clientIp, clientIn, targetOut, isUpload = true)
-            }
-
-            val job2 = proxyScope.launch {
-                pipeStreams(clientIp, targetIn, clientOut, isUpload = false)
-            }
-
-            runBlocking {
-                try {
-                    // End the tunnel when either direction finishes.
+            /*
+             * Use supervisorScope so that when one piping direction finishes,
+             * we close both sockets immediately, which unblocks the blocking
+             * read() in the other direction, causing it to finish naturally.
+             * CancellationException from individual job cancellation is suppressed.
+             */
+            try {
+                supervisorScope {
+                    val j1 = launch { pipeStreams(clientIp, clientIn, targetOut, isUpload = true) }
+                    val j2 = launch { pipeStreams(clientIp, targetIn, clientOut, isUpload = false) }
+                    // Wait for either direction to finish, then close sockets
+                    // to unblock the other direction.
                     kotlinx.coroutines.selects.select<Unit> {
-                        job1.onJoin { }
-                        job2.onJoin { }
+                        j1.onJoin {}
+                        j2.onJoin {}
                     }
-                } finally {
-                    job1.cancel()
-                    job2.cancel()
-
-                    try {
-                        clientSocket.close()
-                    } catch (_: Exception) {
-                    }
-
-                    try {
-                        targetSocket.close()
-                    } catch (_: Exception) {
-                    }
-
-                    try {
-                        job1.join()
-                    } catch (_: Exception) {
-                    }
-
-                    try {
-                        job2.join()
-                    } catch (_: Exception) {
-                    }
+                    // Close sockets to unblock the remaining pipe.
+                    runCatching { clientSocket.close() }
+                    runCatching { targetSocket.close() }
+                    // Wait for the other direction to drain.
+                    j1.join()
+                    j2.join()
                 }
+            } catch (_: Exception) {
+                // Normal: IO exception when sockets are closed.
+            } finally {
+                runCatching { clientSocket.close() }
+                runCatching { targetSocket.close() }
             }
 
         } catch (e: Exception) {
@@ -345,7 +354,7 @@ class HttpProxyServer(
         }
     }
 
-    private fun tunnelHttp(
+    private suspend fun tunnelHttp(
         clientIp: String,
         clientSocket: Socket,
         clientIn: InputStream,
@@ -428,45 +437,29 @@ class HttpProxyServer(
             targetOut.write("\r\n".toByteArray(Charsets.ISO_8859_1))
             targetOut.flush()
 
-            val job1 = proxyScope.launch {
-                pipeStreams(clientIp, clientIn, targetOut, isUpload = true)
-            }
-
-            val job2 = proxyScope.launch {
-                pipeStreams(clientIp, targetIn, clientOut, isUpload = false)
-            }
-
-            runBlocking {
-                try {
-                    // End the HTTP tunnel when either direction finishes.
+            /*
+             * Use supervisorScope so that when one piping direction finishes,
+             * we close both sockets immediately, which unblocks the blocking
+             * read() in the other direction, causing it to finish naturally.
+             */
+            try {
+                supervisorScope {
+                    val j1 = launch { pipeStreams(clientIp, clientIn, targetOut, isUpload = true) }
+                    val j2 = launch { pipeStreams(clientIp, targetIn, clientOut, isUpload = false) }
                     kotlinx.coroutines.selects.select<Unit> {
-                        job1.onJoin { }
-                        job2.onJoin { }
+                        j1.onJoin {}
+                        j2.onJoin {}
                     }
-                } finally {
-                    job1.cancel()
-                    job2.cancel()
-
-                    try {
-                        clientSocket.close()
-                    } catch (_: Exception) {
-                    }
-
-                    try {
-                        targetSocket.close()
-                    } catch (_: Exception) {
-                    }
-
-                    try {
-                        job1.join()
-                    } catch (_: Exception) {
-                    }
-
-                    try {
-                        job2.join()
-                    } catch (_: Exception) {
-                    }
+                    runCatching { clientSocket.close() }
+                    runCatching { targetSocket.close() }
+                    j1.join()
+                    j2.join()
                 }
+            } catch (_: Exception) {
+                // Normal: IO exception when sockets are closed.
+            } finally {
+                runCatching { clientSocket.close() }
+                runCatching { targetSocket.close() }
             }
 
         } catch (e: Exception) {
@@ -517,7 +510,7 @@ class HttpProxyServer(
             totalDownloadCounter.addAndGet(count)
             clientDownloadBytes[clientIp]?.addAndGet(count)
         }
-        updateClientStats(clientIp)
+        // Client stats are updated periodically by startSpeedMonitor(), not per-chunk.
     }
 
     private fun updateClientStats(clientIp: String) {
@@ -557,6 +550,18 @@ class HttpProxyServer(
 
                 lastUp = currUp
                 lastDown = currDown
+
+                // Snapshot per-client byte counters into the client map once per second.
+                for ((ip, client) in connectedClientsMap) {
+                    val up = clientUploadBytes[ip]?.get() ?: 0L
+                    val down = clientDownloadBytes[ip]?.get() ?: 0L
+                    if (client.bytesUploaded != up || client.bytesDownloaded != down) {
+                        connectedClientsMap[ip] = client.copy(
+                            bytesUploaded = up,
+                            bytesDownloaded = down
+                        )
+                    }
+                }
 
                 onBandwidthUpdate(upSpeed, downSpeed, currUp + currDown)
                 notifyClientsChanged()

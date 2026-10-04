@@ -12,8 +12,19 @@ import com.netfetch.app.gateway.net.NetfetchDirectConnector
 import com.netfetch.app.gateway.net.NetfetchSocketProtector
 import com.netfetch.app.gateway.net.NetfetchTunEngine
 import com.netfetch.app.network.NetfetchUpstreamRuntime
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 class VpnGatewayService : VpnService() {
+
+    private val serviceScope =
+        CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+    private var upstreamMonitorJob: Job? = null
 
     companion object {
         private const val TAG = "NetfetchVpnGateway"
@@ -123,6 +134,37 @@ class VpnGatewayService : VpnService() {
                     it.start()
                 }
 
+            NetfetchUpstreamRuntime.setSocketProtector { socket ->
+                protect(socket)
+            }
+            NetfetchUpstreamRuntime.setDatagramSocketProtector { socket ->
+                protect(socket)
+            }
+
+            val currentNetwork = NetfetchUpstreamRuntime.currentNetwork()
+            if (currentNetwork != null) {
+                setUnderlyingNetworks(arrayOf(currentNetwork))
+            } else {
+                setUnderlyingNetworks(null)
+            }
+
+            upstreamMonitorJob?.cancel()
+            upstreamMonitorJob = serviceScope.launch {
+                NetfetchUpstreamRuntime.state()?.collect { state ->
+                    val network = state.network
+                    if (network != null) {
+                        setUnderlyingNetworks(arrayOf(network))
+                        Log.i(
+                            TAG,
+                            "VPN underlying network updated: $network (${state.displayName})"
+                        )
+                    } else {
+                        setUnderlyingNetworks(null)
+                        Log.i(TAG, "VPN underlying network cleared")
+                    }
+                }
+            }
+
             Log.i(TAG, "Netfetch TUN gateway started")
         } catch (e: Exception) {
             Log.e(TAG, "Unable to start TUN gateway", e)
@@ -177,6 +219,16 @@ class VpnGatewayService : VpnService() {
     private fun stopGateway() {
         Log.i(TAG, "Stopping Netfetch TUN gateway")
 
+        upstreamMonitorJob?.cancel()
+        upstreamMonitorJob = null
+
+        runCatching {
+            setUnderlyingNetworks(null)
+        }
+
+        NetfetchUpstreamRuntime.setSocketProtector(null)
+        NetfetchUpstreamRuntime.setDatagramSocketProtector(null)
+
         runCatching {
             tunEngine?.stop()
         }
@@ -193,6 +245,7 @@ class VpnGatewayService : VpnService() {
 
     override fun onDestroy() {
         stopGateway()
+        serviceScope.cancel()
         super.onDestroy()
     }
 

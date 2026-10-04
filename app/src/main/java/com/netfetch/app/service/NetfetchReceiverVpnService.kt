@@ -145,6 +145,13 @@ class NetfetchReceiverVpnService : VpnService() {
                         "Android failed to establish receiver VPN"
                     )
 
+            // The receiver VPN routes traffic to the provider over Wi-Fi Direct.
+            // Wi-Fi Direct creates a P2P group network that is not tracked by
+            // UpstreamNetworkManager. Passing null tells Android to allow the
+            // VPN to use whichever interface is available, which is the correct
+            // behaviour when the upstream path is a Wi-Fi Direct link.
+            setUnderlyingNetworks(null)
+
             val connector =
                 NetfetchReceiverConnector(
                     vpnService = this,

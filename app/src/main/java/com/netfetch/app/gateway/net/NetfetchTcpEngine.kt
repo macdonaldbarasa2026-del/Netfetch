@@ -248,39 +248,74 @@ class NetfetchTcpEngine(
         val destination =
             PacketCodec.ipv4Address(key.destinationIp)
 
-        val connected =
-            sessions.open(
-                key = key,
-                destination = destination,
-                destinationPort = key.destinationPort,
-                onData = { sessionKey, data ->
-                    synchronized(this) {
-                        handleUpstreamDataLocked(
-                            sessionKey,
-                            data
+        /*
+         * Upstream connection establishment is asynchronous.
+         *
+         * The old implementation called connector.connectTcp() directly
+         * while holding this engine's synchronized lock. A slow DNS/connect
+         * path could therefore stall every other TCP flow.
+         */
+        sessions.open(
+            key = key,
+            destination = destination,
+            destinationPort = key.destinationPort,
+
+            onConnected = { sessionKey ->
+                synchronized(this) {
+                    val connectedFlow =
+                        flows[sessionKey]
+                            ?: return@synchronized
+
+                    if (
+                        stopped ||
+                        connectedFlow.closed
+                    ) {
+                        return@synchronized
+                    }
+
+                    sendSynAckLocked(
+                        connectedFlow
+                    )
+                }
+            },
+
+            onConnectFailed = { sessionKey ->
+                synchronized(this) {
+                    val failedFlow =
+                        flows.remove(
+                            sessionKey
+                        )
+
+                    if (failedFlow != null) {
+                        failedFlow.closed = true
+
+                        sendRst(
+                            key = sessionKey,
+                            sequence = failedFlow.serverInitialSequence,
+                            acknowledgement =
+                                failedFlow.nextClientSequence
                         )
                     }
-                },
-                onClosed = { sessionKey ->
-                    synchronized(this) {
-                        handleUpstreamClosedLocked(sessionKey)
-                    }
                 }
-            )
+            },
 
-        if (!connected) {
-            flows.remove(key)
+            onData = { sessionKey, data ->
+                synchronized(this) {
+                    handleUpstreamDataLocked(
+                        sessionKey,
+                        data
+                    )
+                }
+            },
 
-            sendRst(
-                key = key,
-                sequence = serverSequence,
-                acknowledgement = tcp.sequence + 1
-            )
-
-            return
-        }
-
-        sendSynAckLocked(flow)
+            onClosed = { sessionKey ->
+                synchronized(this) {
+                    handleUpstreamClosedLocked(
+                        sessionKey
+                    )
+                }
+            }
+        )
     }
 
     private fun sendSynAckLocked(flow: Flow) {

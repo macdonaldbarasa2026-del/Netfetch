@@ -24,6 +24,7 @@ import com.netfetch.app.network.WifiDirectManager
 import com.netfetch.app.proxy.HttpProxyServer
 import com.netfetch.app.proxy.PacServer
 import com.netfetch.app.netfetchlink.NetfetchLinkServer
+import com.netfetch.app.netfetchlink.NetfetchProviderDiscovery
 import com.netfetch.app.proxy.Socks5ProxyServer
 import com.netfetch.app.ui.MainActivity
 import kotlinx.coroutines.*
@@ -73,6 +74,7 @@ class HotspotService : Service() {
     private var proxyServer: HttpProxyServer? = null
     private var socks5Server: Socks5ProxyServer? = null
     private var linkServer: NetfetchLinkServer? = null
+    private var providerDiscovery: NetfetchProviderDiscovery? = null
     private var pacServer: PacServer? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
@@ -193,14 +195,20 @@ class HotspotService : Service() {
             }
         ).also { it.start() }
 
-        // 3. Start NetFetch session-link server and SOCKS5 in Pro mode.
-        if (config.mode == TetherMode.PRO) {
-            linkServer = NetfetchLinkServer(
-                socksPort = config.socksPort
-            ).also { it.start() }
-        }
+        // 3. Start NetFetch session-link server in BOTH Normal and Pro modes.
+        //    Normal mode uses it to share HTTP proxy and PAC details automatically.
+        //    Pro mode also uses it for SOCKS5 session token issuance.
+        linkServer = NetfetchLinkServer(
+            mode = if (config.mode == TetherMode.PRO)
+                com.netfetch.app.netfetchlink.NetfetchLinkProtocol.MODE_PRO
+            else
+                com.netfetch.app.netfetchlink.NetfetchLinkProtocol.MODE_NORMAL,
+            socksPort = config.socksPort,
+            httpPort = config.proxyPort,
+            pacPort = config.pacPort
+        ).also { it.start() }
 
-        // 4. Start SOCKS5 in Pro mode (binds to upstream network)
+        // 4. Start SOCKS5 in Pro mode only (binds to upstream network)
         if (config.mode == TetherMode.PRO) {
             socks5Server = Socks5ProxyServer(
                 socksPort = config.socksPort,
@@ -241,6 +249,22 @@ class HotspotService : Service() {
                 // Restart PAC server with correct gateway address
                 pacServer?.stop()
                 startPacServer(currentConfig, gateway)
+
+                // Advertise provider via DNS-SD for both Normal and Pro modes.
+                providerDiscovery?.stop()
+                providerDiscovery = NetfetchProviderDiscovery(this@HotspotService).also {
+                    it.start(
+                        ssid = ssid,
+                        mode = if (currentConfig.mode == TetherMode.PRO)
+                            com.netfetch.app.netfetchlink.NetfetchLinkProtocol.MODE_PRO
+                        else
+                            com.netfetch.app.netfetchlink.NetfetchLinkProtocol.MODE_NORMAL,
+                        socksPort = currentConfig.socksPort,
+                        httpPort = currentConfig.proxyPort,
+                        pacPort = currentConfig.pacPort
+                    )
+                }
+
                 updateActiveState()
                 updateNotification()
             },
@@ -364,13 +388,17 @@ class HotspotService : Service() {
     }
 
     private fun stopProxyServers() {
-        proxyServer?.stop()
-        socks5Server?.stop()
+        // Stop DNS-SD advertisement first so no new receivers attempt to connect
+        // while the session and proxy servers are shutting down.
+        providerDiscovery?.stop()
         linkServer?.stop()
         pacServer?.stop()
+        socks5Server?.stop()
+        proxyServer?.stop()
         proxyServer = null
         socks5Server = null
         linkServer = null
+        providerDiscovery = null
         pacServer = null
     }
 

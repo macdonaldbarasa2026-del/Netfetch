@@ -11,7 +11,15 @@ object NetfetchLinkProtocol {
     const val KEY_APP = "app"
     const val KEY_MODE = "mode"
     const val KEY_SOCKS_PORT = "socksport"
+    const val KEY_HTTP_PORT = "httpport"
+    const val KEY_PAC_PORT = "pacport"
     const val KEY_SSID = "ssid"
 
+    /** Mode values advertised in DNS-SD TXT record and sent over the link protocol. */
+    const val MODE_NORMAL = "NORMAL"
+    const val MODE_PRO = "PRO"
+
     const val DEFAULT_SOCKS_PORT = 1080
+    const val DEFAULT_HTTP_PORT = 8282
+    const val DEFAULT_PAC_PORT = 8283
 }
