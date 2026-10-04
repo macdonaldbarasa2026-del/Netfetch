@@ -22,7 +22,7 @@ import java.util.concurrent.ThreadLocalRandom
  * - idle flow cleanup
  */
 class NetfetchTcpEngine(
-    private val connector: NetfetchDirectConnector,
+    private val connector: NetfetchConnector,
     private val writer: (ByteArray) -> Unit
 ) {
 

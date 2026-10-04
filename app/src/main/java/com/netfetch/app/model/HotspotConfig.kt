@@ -2,7 +2,7 @@ package com.netfetch.app.model
 
 enum class TetherMode(val displayName: String, val description: String) {
     NORMAL("Normal Mode", "Standard HTTP/HTTPS Proxy (Port 8282) - For Web, Streaming & Videos"),
-    PRO("Pro Mode (Advanced)", "SOCKS5 & Transparent Tunneling (Port 1080) - Real Unblocked Internet for All Apps & Games")
+    PRO("Pro Mode (Advanced)", "SOCKS5 + TCP/UDP Gateway - Advanced app and network routing")
 }
 
 data class HotspotConfig(

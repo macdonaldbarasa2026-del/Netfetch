@@ -35,6 +35,9 @@ import com.netfetch.app.model.BandPreference
 import com.netfetch.app.model.HotspotConfig
 import com.netfetch.app.model.HotspotState
 import com.netfetch.app.service.HotspotService
+import com.netfetch.app.service.NetfetchReceiverVpnService
+import com.netfetch.app.netfetchlink.NetfetchReceiverLink
+import com.netfetch.app.netfetchlink.NetfetchReceiverState
 import com.netfetch.app.ui.screens.DevicesScreen
 import com.netfetch.app.ui.screens.HelpScreen
 import com.netfetch.app.ui.screens.HomeScreen
@@ -88,6 +91,13 @@ class MainActivity : ComponentActivity() {
     private var hotspotService: HotspotService? = null
     private var isBound = false
 
+    private val receiverStateFlow =
+        mutableStateOf<NetfetchReceiverState>(NetfetchReceiverState.Idle)
+
+    private var receiverLink: NetfetchReceiverLink? = null
+    private var pendingReceiverConnection:
+        NetfetchReceiverState.Connected? = null
+
     private val hotspotStateFlow = mutableStateOf<HotspotState>(HotspotState.Idle)
 
     private val vpnPermissionLauncher =
@@ -96,6 +106,23 @@ class MainActivity : ComponentActivity() {
                 startHotspotServiceAfterVpnPermission(configStateFlow.value)
             }
         }
+    private val receiverVpnPermissionLauncher =
+        registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) { result ->
+            val connection = pendingReceiverConnection
+            pendingReceiverConnection = null
+
+            if (result.resultCode == RESULT_OK && connection != null) {
+                startReceiverVpn(connection)
+            } else if (connection != null) {
+                receiverStateFlow.value =
+                    NetfetchReceiverState.Error(
+                        "Receiver VPN permission was not granted."
+                    )
+            }
+        }
+
     private val configStateFlow = mutableStateOf(HotspotConfig())
 
     private val serviceConnection = object : ServiceConnection {
@@ -131,6 +158,29 @@ class MainActivity : ComponentActivity() {
 
         preferences = getSharedPreferences("netfetch_settings", Context.MODE_PRIVATE)
         configStateFlow.value = loadSavedConfig()
+
+        receiverLink = NetfetchReceiverLink(
+            context = this,
+            onStateChanged = { receiverState ->
+                runOnUiThread {
+                    receiverStateFlow.value = receiverState
+
+                    when (receiverState) {
+                        is NetfetchReceiverState.Connected -> {
+                            requestReceiverVpn(receiverState)
+                        }
+
+                        NetfetchReceiverState.Idle,
+                        NetfetchReceiverState.Searching,
+                        is NetfetchReceiverState.ProviderFound,
+                        NetfetchReceiverState.Connecting,
+                        is NetfetchReceiverState.Error -> {
+                            stopReceiverVpn()
+                        }
+                    }
+                }
+            }
+        )
 
         Intent(this, HotspotService::class.java).also { intent ->
             bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
@@ -241,6 +291,9 @@ class MainActivity : ComponentActivity() {
                                         startHotspotService(config)
                                     }
                                 },
+                                receiverState = receiverStateFlow.value,
+                                onStartReceiver = { startReceiverDiscovery() },
+                                onStopReceiver = { stopReceiverConnection() },
                                 onNavigateToDevices = { navController.navigate("devices") }
                             )
                         }
@@ -303,11 +356,15 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startHotspotService(config: HotspotConfig) {
-        val vpnIntent = VpnService.prepare(this)
+        // Normal mode uses the HTTP/PAC proxy path and does not need
+        // Android VPN permission. Pro mode uses the TUN gateway.
+        if (config.mode == TetherMode.PRO) {
+            val vpnIntent = VpnService.prepare(this)
 
-        if (vpnIntent != null) {
-            vpnPermissionLauncher.launch(vpnIntent)
-            return
+            if (vpnIntent != null) {
+                vpnPermissionLauncher.launch(vpnIntent)
+                return
+            }
         }
 
         startHotspotServiceAfterVpnPermission(config)
@@ -324,6 +381,103 @@ class MainActivity : ComponentActivity() {
             putExtra(HotspotService.EXTRA_SOCKS_USERNAME, config.socksUsername)
             putExtra(HotspotService.EXTRA_SOCKS_PASSWORD, config.socksPassword)
             putExtra(HotspotService.EXTRA_MODE, config.mode.ordinal)
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+
+    private fun startReceiverDiscovery() {
+        if (configStateFlow.value.mode != TetherMode.PRO) {
+            receiverStateFlow.value =
+                NetfetchReceiverState.Error(
+                    "NetFetch receiver requires Pro Mode."
+                )
+            return
+        }
+
+        receiverLink?.stop()
+        receiverStateFlow.value = NetfetchReceiverState.Searching
+        receiverLink?.start()
+    }
+
+    private fun stopReceiverConnection() {
+        receiverLink?.stop()
+
+        val intent = Intent(
+            this,
+            NetfetchReceiverVpnService::class.java
+        ).apply {
+            action = NetfetchReceiverVpnService.ACTION_STOP
+        }
+
+        startService(intent)
+
+        pendingReceiverConnection = null
+        receiverStateFlow.value = NetfetchReceiverState.Idle
+    }
+
+    private fun stopReceiverVpn() {
+        val intent = Intent(
+            this,
+            NetfetchReceiverVpnService::class.java
+        ).apply {
+            action = NetfetchReceiverVpnService.ACTION_STOP
+        }
+
+        runCatching {
+            startService(intent)
+        }.onFailure { error ->
+            Log.w(
+                "NetFetch",
+                "Unable to stop receiver VPN: ${error.message}"
+            )
+        }
+
+        pendingReceiverConnection = null
+    }
+
+    private fun requestReceiverVpn(
+        connection: NetfetchReceiverState.Connected
+    ) {
+        pendingReceiverConnection = connection
+
+        val vpnIntent = VpnService.prepare(this)
+
+        if (vpnIntent != null) {
+            receiverVpnPermissionLauncher.launch(vpnIntent)
+        } else {
+            startReceiverVpn(connection)
+        }
+    }
+
+    private fun startReceiverVpn(
+        connection: NetfetchReceiverState.Connected
+    ) {
+        val intent = Intent(
+            this,
+            NetfetchReceiverVpnService::class.java
+        ).apply {
+            action = NetfetchReceiverVpnService.ACTION_START
+            putExtra(
+                NetfetchReceiverVpnService.EXTRA_PROVIDER_HOST,
+                connection.providerAddress
+            )
+            putExtra(
+                NetfetchReceiverVpnService.EXTRA_PROVIDER_PORT,
+                connection.socksPort
+            )
+            putExtra(
+                NetfetchReceiverVpnService.EXTRA_USERNAME,
+                "netfetch-session"
+            )
+            putExtra(
+                NetfetchReceiverVpnService.EXTRA_PASSWORD,
+                connection.sessionToken
+            )
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

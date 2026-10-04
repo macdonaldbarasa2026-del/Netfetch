@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
  * Android network. Every connection must use NetfetchDirectConnector.
  */
 class NetfetchTcpSessionManager(
-    private val connector: NetfetchDirectConnector
+    private val connector: NetfetchConnector
 ) {
 
     private data class Session(

@@ -70,6 +70,21 @@
             </intent-filter>
         </service>
 
+        <!-- NetFetch receiver VPN tunnel -->
+        <service
+            android:name=".service.NetfetchReceiverVpnService"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="NetFetch receiver VPN tunnel" />
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
+
     </application>
 
 </manifest>

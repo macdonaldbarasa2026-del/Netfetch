@@ -29,16 +29,20 @@ import com.netfetch.app.model.BandPreference
 import com.netfetch.app.model.HotspotConfig
 import com.netfetch.app.model.HotspotState
 import com.netfetch.app.model.TetherMode
+import com.netfetch.app.netfetchlink.NetfetchReceiverState
 import com.netfetch.app.ui.theme.*
 
 @Composable
 fun HomeScreen(
     state: HotspotState,
     config: HotspotConfig,
+    receiverState: NetfetchReceiverState,
     onToggleHotspot: () -> Unit,
     onModeChange: (TetherMode) -> Unit,
     onBandChange: (BandPreference) -> Unit,
-    onNavigateToDevices: () -> Unit
+    onNavigateToDevices: () -> Unit,
+    onStartReceiver: () -> Unit,
+    onStopReceiver: () -> Unit
 ) {
     val context = LocalContext.current
     val scrollState = rememberScrollState()
@@ -198,6 +202,17 @@ fun HomeScreen(
         )
 
         Spacer(modifier = Modifier.height(24.dp))
+
+        // ── NetFetch-to-NetFetch Receiver ──
+        if (config.mode == TetherMode.PRO) {
+            NetfetchReceiverCard(
+                state = receiverState,
+                onStart = onStartReceiver,
+                onStop = onStopReceiver
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+        }
 
         // ── Status Dashboard (Active only) ──
         if (activeState != null) {
@@ -437,6 +452,113 @@ fun HomeScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun NetfetchReceiverCard(
+    state: NetfetchReceiverState,
+    onStart: () -> Unit,
+    onStop: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = CardWhite),
+        border = BorderStroke(1.dp, SurfaceBorder),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = "NetFetch-to-NetFetch",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = PrimaryBlack
+            )
+
+            Text(
+                text = "Connect this phone to another NetFetch Pro provider automatically. No manual proxy settings are required.",
+                fontSize = 12.sp,
+                color = TextMuted
+            )
+
+            when (state) {
+                NetfetchReceiverState.Idle -> {
+                    ReceiverActionButton(
+                        text = "Connect to NetFetch Provider",
+                        onClick = onStart
+                    )
+                }
+
+                NetfetchReceiverState.Searching -> {
+                    ReceiverStatusText(
+                        text = "Searching for a NetFetch Pro provider..."
+                    )
+                }
+
+                is NetfetchReceiverState.ProviderFound -> {
+                    ReceiverStatusText(
+                        text = "Provider found: ${state.deviceName}
+Connecting..."
+                    )
+                }
+
+                NetfetchReceiverState.Connecting -> {
+                    ReceiverStatusText(
+                        text = "Connecting to NetFetch provider..."
+                    )
+                }
+
+                is NetfetchReceiverState.Connected -> {
+                    ReceiverStatusText(
+                        text = "Connected to ${state.providerAddress}\nSecure session active"
+                    )
+
+                    ReceiverActionButton(
+                        text = "Disconnect",
+                        onClick = onStop
+                    )
+                }
+
+                is NetfetchReceiverState.Error -> {
+                    Text(
+                        text = state.message,
+                        fontSize = 12.sp,
+                        color = RedError
+                    )
+
+                    ReceiverActionButton(
+                        text = "Try Again",
+                        onClick = onStart
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReceiverStatusText(text: String) {
+    Text(
+        text = text,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.Medium,
+        color = PrimaryBlack
+    )
+}
+
+@Composable
+private fun ReceiverActionButton(
+    text: String,
+    onClick: () -> Unit
+) {
+    Button(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick
+    ) {
+        Text(text)
     }
 }
 

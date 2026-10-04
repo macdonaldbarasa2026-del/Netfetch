@@ -15,20 +15,22 @@ import com.netfetch.app.model.BandPreference
 import com.netfetch.app.model.ClientDevice
 import com.netfetch.app.model.HotspotConfig
 import com.netfetch.app.model.HotspotState
+import com.netfetch.app.model.NetfetchClientRegistry
 import com.netfetch.app.model.TetherMode
 import com.netfetch.app.network.ConnectivityTester
-import com.netfetch.app.network.UpstreamNetworkManager
 import com.netfetch.app.network.NetfetchUpstreamRuntime
+import com.netfetch.app.network.UpstreamNetworkManager
 import com.netfetch.app.network.WifiDirectManager
 import com.netfetch.app.proxy.HttpProxyServer
 import com.netfetch.app.proxy.PacServer
+import com.netfetch.app.netfetchlink.NetfetchLinkServer
 import com.netfetch.app.proxy.Socks5ProxyServer
 import com.netfetch.app.ui.MainActivity
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 
 /**
  * HotspotService — foreground service that orchestrates the full NetFetch stack.
@@ -70,11 +72,20 @@ class HotspotService : Service() {
     private var wifiDirectManager: WifiDirectManager? = null
     private var proxyServer: HttpProxyServer? = null
     private var socks5Server: Socks5ProxyServer? = null
+    private var linkServer: NetfetchLinkServer? = null
     private var pacServer: PacServer? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
     private var currentConfig = HotspotConfig()
     private var activeClients = emptyList<ClientDevice>()
+
+    /**
+     * Single authoritative registry for downstream clients.
+     *
+     * Wi-Fi Direct, HTTP proxy and SOCKS5 can observe the same physical
+     * device through different identities. The registry reconciles them.
+     */
+    private val clientRegistry = NetfetchClientRegistry()
     private var currentUpSpeed = 0L
     private var currentDownSpeed = 0L
     private var currentGateway = "192.168.49.1"
@@ -162,7 +173,16 @@ class HotspotService : Service() {
             port = config.proxyPort,
             upstreamNetworkProvider = { NetfetchUpstreamRuntime.currentNetwork() },
             onClientActivity = { clientsMap ->
-                activeClients = clientsMap.values.toList()
+                activeClients =
+                    clientRegistry.publishTrafficClients(
+                        clientsMap.values.toList()
+                    )
+
+                Log.i(
+                    TAG,
+                    "HTTP proxy clients updated: ${activeClients.size}"
+                )
+
                 updateActiveState()
             },
             onBandwidthUpdate = { upSpeed, downSpeed, _ ->
@@ -173,26 +193,42 @@ class HotspotService : Service() {
             }
         ).also { it.start() }
 
-        // 3. Start SOCKS5 in Pro mode (binds to upstream network)
+        // 3. Start NetFetch session-link server and SOCKS5 in Pro mode.
+        if (config.mode == TetherMode.PRO) {
+            linkServer = NetfetchLinkServer(
+                socksPort = config.socksPort
+            ).also { it.start() }
+        }
+
+        // 4. Start SOCKS5 in Pro mode (binds to upstream network)
         if (config.mode == TetherMode.PRO) {
             socks5Server = Socks5ProxyServer(
                 socksPort = config.socksPort,
                 username = config.socksUsername,
                 password = config.socksPassword,
+                sessionValidator = { token -> linkServer?.validateSession(token) == true },
                 upstreamNetworkProvider = { NetfetchUpstreamRuntime.currentNetwork() },
                 onClientActivity = { clientsMap ->
-                    val combined = (activeClients + clientsMap.values).distinctBy { it.ipAddress }
-                    activeClients = combined
+                    activeClients =
+                        clientRegistry.publishTrafficClients(
+                            clientsMap.values.toList()
+                        )
+
+                    Log.i(
+                        TAG,
+                        "SOCKS5 clients updated: ${activeClients.size}"
+                    )
+
                     updateActiveState()
                 },
                 onBandwidthUpdate = { _, _, _ -> }
             ).also { it.start() }
         }
 
-        // 4. Start PAC server (initially with default gateway; updated after Wi-Fi Direct starts)
+        // 5. Start PAC server (initially with default gateway; updated after Wi-Fi Direct starts)
         startPacServer(config, currentGateway)
 
-        // 5. Start Wi-Fi Direct group
+        // 6. Start Wi-Fi Direct group
         wifiDirectManager = WifiDirectManager(
             context = this,
             onGroupInfoAvailable = { group, ssid, passphrase, gateway ->
@@ -207,6 +243,19 @@ class HotspotService : Service() {
                 startPacServer(currentConfig, gateway)
                 updateActiveState()
                 updateNotification()
+            },
+            onClientsChanged = { p2pClients ->
+                activeClients =
+                    clientRegistry.publishP2pClients(
+                        p2pClients
+                    )
+
+                Log.i(
+                    TAG,
+                    "Wi-Fi Direct clients updated: ${activeClients.size}"
+                )
+
+                updateActiveState()
             },
             onError = { errorMsg ->
                 _hotspotState.value = HotspotState.Error(errorMsg)
@@ -231,9 +280,12 @@ class HotspotService : Service() {
 
             if (!isActive) return@launch
 
-            Log.i(TAG, "Verified upstream is ready; starting TUN gateway")
-
-            startVpnGateway()
+            if (config.mode == TetherMode.PRO) {
+                Log.i(TAG, "Verified upstream is ready; starting Pro TUN gateway")
+                startVpnGateway()
+            } else {
+                Log.i(TAG, "Verified upstream is ready; Normal mode uses HTTP/PAC proxy only")
+            }
 
             // 7. Periodic internet verification
             startInternetMonitor()
@@ -295,6 +347,7 @@ class HotspotService : Service() {
         stopProxyServers()
 
         wifiDirectManager?.stopGroup()
+        clientRegistry.clear()
         wifiDirectManager = null
 
         upstreamNetworkManager?.let { NetfetchUpstreamRuntime.stop(it) }
@@ -313,9 +366,11 @@ class HotspotService : Service() {
     private fun stopProxyServers() {
         proxyServer?.stop()
         socks5Server?.stop()
+        linkServer?.stop()
         pacServer?.stop()
         proxyServer = null
         socks5Server = null
+        linkServer = null
         pacServer = null
     }
 

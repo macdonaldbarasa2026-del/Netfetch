@@ -33,6 +33,7 @@ import java.net.NetworkInterface
 class WifiDirectManager(
     private val context: Context,
     private val onGroupInfoAvailable: (WifiP2pGroup?, String, String, String) -> Unit,
+    private val onClientsChanged: (List<com.netfetch.app.model.ClientDevice>) -> Unit = {},
     private val onError: (String) -> Unit
 ) {
     private var activePassphrase: String = "82828282"
@@ -183,6 +184,8 @@ class WifiDirectManager(
                         "SSID=$ssid gateway=$gateway clients=${group.clientList.size}"
                 )
 
+                publishClients(group)
+
                 onGroupInfoAvailable(
                     group,
                     ssid,
@@ -239,6 +242,31 @@ class WifiDirectManager(
                 fetchGroupDetails()
             }
         }.start()
+    }
+
+    /**
+     * Publish clients known by the Android Wi-Fi Direct group.
+     *
+     * Wi-Fi Direct exposes the connected peer identity through WifiP2pGroup,
+     * but it does not immediately provide the peer's LAN IP address.
+     * "Awaiting IP" is therefore intentional until traffic or another
+     * network-level discovery mechanism identifies the address.
+     */
+    private fun publishClients(group: WifiP2pGroup) {
+        val clients = group.clientList.map { device ->
+            com.netfetch.app.model.ClientDevice(
+                ipAddress = "Awaiting IP",
+                macAddress = device.deviceAddress ?: "Unknown MAC",
+                deviceName = device.deviceName ?: "Connected Device"
+            )
+        }
+
+        Log.i(
+            TAG,
+            "Publishing ${clients.size} Wi-Fi Direct client(s)"
+        )
+
+        onClientsChanged(clients)
     }
 
     /**
@@ -317,6 +345,7 @@ class WifiDirectManager(
             }
         })
         currentGroup = null
+        onClientsChanged(emptyList())
     }
 
     private fun registerReceiver() {
@@ -342,6 +371,9 @@ class WifiDirectManager(
                         val networkInfo = intent.getParcelableExtra<NetworkInfo>(WifiP2pManager.EXTRA_NETWORK_INFO)
                         if (networkInfo?.isConnected == true) {
                             fetchGroupDetails()
+                        } else {
+                            currentGroup = null
+                            onClientsChanged(emptyList())
                         }
                     }
                 }

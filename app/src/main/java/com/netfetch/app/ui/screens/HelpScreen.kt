@@ -15,15 +15,19 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.netfetch.app.ui.theme.*
 import com.netfetch.app.model.HotspotConfig
+import com.netfetch.app.model.TetherMode
+import com.netfetch.app.ui.theme.*
 
 @Composable
 fun HelpScreen(config: HotspotConfig) {
     val scrollState = rememberScrollState()
+    val isPro = config.mode == TetherMode.PRO
 
     Column(
         modifier = Modifier
@@ -38,15 +42,67 @@ fun HelpScreen(config: HotspotConfig) {
             fontWeight = FontWeight.Bold,
             color = PrimaryBlack
         )
+
         Text(
-            text = "Step-by-step proxy configuration for each platform",
+            text = if (isPro) {
+                "Pro routing, SOCKS5 and device setup"
+            } else {
+                "Normal HTTP/PAC proxy setup for connected devices"
+            },
             fontSize = 12.sp,
             color = TextMuted
         )
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Architecture Info Card
+        // Current mode card
+        Card(
+            colors = CardDefaults.cardColors(containerColor = CardWhite),
+            border = BorderStroke(
+                1.dp,
+                if (isPro) PrimaryBlack else AmberWarning
+            ),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = if (isPro) Icons.Default.Speed else Icons.Default.Public,
+                        contentDescription = null,
+                        tint = if (isPro) PrimaryBlack else AmberWarning
+                    )
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    Text(
+                        text = if (isPro) "Pro Mode" else "Normal Mode",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = TextDark
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = if (isPro) {
+                        "Pro uses the SOCKS5 service plus an Android VPN/TUN gateway. " +
+                                "The gateway handles IPv4 TCP and UDP traffic for advanced routing. " +
+                                "Android asks for VPN permission before Pro networking can start."
+                    } else {
+                        "Normal uses the HTTP/HTTPS proxy and PAC configuration. " +
+                                "It does not use the Android VPN gateway and does not require VPN permission."
+                    },
+                    fontSize = 12.sp,
+                    color = TextMuted
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Architecture
         Card(
             colors = CardDefaults.cardColors(containerColor = CardWhite),
             border = BorderStroke(1.dp, AmberWarning),
@@ -55,8 +111,14 @@ fun HelpScreen(config: HotspotConfig) {
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Info, contentDescription = null, tint = AmberWarning)
+                    Icon(
+                        Icons.Default.Info,
+                        contentDescription = null,
+                        tint = AmberWarning
+                    )
+
                     Spacer(modifier = Modifier.width(8.dp))
+
                     Text(
                         "How NetFetch Works",
                         fontSize = 15.sp,
@@ -64,29 +126,102 @@ fun HelpScreen(config: HotspotConfig) {
                         color = TextDark
                     )
                 }
+
                 Spacer(modifier = Modifier.height(8.dp))
+
                 Text(
-                    text = "NetFetch shares your phone's internet connection over Wi-Fi Direct " +
-                            "using an HTTP/SOCKS5 proxy. This requires no root access. " +
-                            "Connected devices must configure their proxy manually — " +
-                            "NetFetch cannot create transparent IP routing without root.",
+                    text = if (isPro) {
+                        "Pro mode uses the phone's active Wi-Fi or mobile-data connection as the upstream. " +
+                                "Connected devices use the NetFetch Wi-Fi connection, while the Pro gateway " +
+                                "handles routed IPv4 TCP/UDP traffic."
+                    } else {
+                        "Normal mode uses the phone's active Wi-Fi or mobile-data connection as the upstream. " +
+                                "Connected devices reach the Internet through the NetFetch HTTP/HTTPS proxy or PAC configuration."
+                    },
                     fontSize = 12.sp,
                     color = TextMuted
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                ArchBox("Your Phone Internet  (Wi-Fi or Mobile Data)")
-                ArchBox("↓")
-                ArchBox("NetFetch  (HTTP Proxy :${config.proxyPort} / SOCKS5 :${config.socksPort})")
-                ArchBox("↓")
-                ArchBox("Wi-Fi Direct  (SSID: DIRECT-NetFetch-*)")
-                ArchBox("↓")
-                ArchBox("Client Device  (proxy configured)")
-                ArchBox("↓")
-                ArchBox("Internet Access via Proxy")
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                if (isPro) {
+                    ArchBox("Your Phone Internet (Wi-Fi or Mobile Data)")
+                    ArchBox("↓")
+                    ArchBox("NetFetch Pro Gateway + SOCKS5 :${config.socksPort}")
+                    ArchBox("↓")
+                    ArchBox("Wi-Fi Direct (SSID: DIRECT-NetFetch-*)")
+                    ArchBox("↓")
+                    ArchBox("Client Device")
+                    ArchBox("↓")
+                    ArchBox("Routed IPv4 TCP/UDP Internet Traffic")
+                } else {
+                    ArchBox("Your Phone Internet (Wi-Fi or Mobile Data)")
+                    ArchBox("↓")
+                    ArchBox("NetFetch HTTP Proxy :${config.proxyPort} / PAC :${config.pacPort}")
+                    ArchBox("↓")
+                    ArchBox("Wi-Fi Direct (SSID: DIRECT-NetFetch-*)")
+                    ArchBox("↓")
+                    ArchBox("Client Device (proxy configured)")
+                    ArchBox("↓")
+                    ArchBox("Internet Access via Proxy")
+                }
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
+
+        // Pro-specific setup
+        if (isPro) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardWhite),
+                border = BorderStroke(1.dp, PrimaryBlack),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.Security,
+                            contentDescription = null,
+                            tint = PrimaryBlack
+                        )
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        Text(
+                            "Pro Mode Setup",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextDark
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    FaqItem(
+                        question = "Why does Pro request VPN permission?",
+                        answer = "The Pro TCP/UDP gateway uses Android VpnService to receive and route " +
+                                "IPv4 traffic. This requires the Android system VPN permission. " +
+                                "No root access is required."
+                    )
+
+                    FaqItem(
+                        question = "What does the Pro gateway support?",
+                        answer = "The built-in gateway currently handles IPv4 TCP and UDP traffic. " +
+                                "It is separate from the SOCKS5 server."
+                    )
+
+                    FaqItem(
+                        question = "Is SOCKS5 the same as the Pro gateway?",
+                        answer = "No. SOCKS5 is an additional proxy interface on port ${config.socksPort}. " +
+                                "The SOCKS5 implementation supports TCP CONNECT. The separate Pro TUN gateway " +
+                                "handles routed IPv4 TCP and UDP traffic."
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+        }
 
         VisualHelpGuideItem(
             icon = Icons.Default.DesktopWindows,
@@ -101,14 +236,13 @@ fun HelpScreen(config: HotspotConfig) {
             steps = listOf(
                 "1. Connect your Windows PC to the NetFetch Wi-Fi network.",
                 "2. Open Settings → Network & Internet → Proxy.",
-                "3. Under 'Manual proxy setup', toggle ON 'Use a proxy server'.",
+                "3. Under 'Manual proxy setup', enable 'Use a proxy server'.",
                 "4. Enter Address: ${config.hostIp} and Port: ${config.proxyPort}.",
-                "5. Click Save. Internet should now work through NetFetch.",
+                "5. Save the settings and test an HTTPS website.",
                 "",
-                "Alternative — PAC URL method:",
-                "In the Proxy settings, choose 'Use setup script'.",
-                "Enter: http://${config.hostIp}:${config.pacPort}/wpad.dat",
-                "Click Save."
+                "PAC URL method:",
+                "Enable 'Use setup script' when supported.",
+                "http://${config.hostIp}:${config.pacPort}/wpad.dat"
             )
         )
 
@@ -116,21 +250,22 @@ fun HelpScreen(config: HotspotConfig) {
 
         VisualHelpGuideItem(
             icon = Icons.Default.PhoneIphone,
-            title = "iPhone / iPad (iOS) Setup",
+            title = "iPhone / iPad Setup",
             diagramTitle = "[ iOS Wi-Fi Proxy Configuration ]",
             diagramBoxes = listOf(
                 "Settings → Wi-Fi → Tap (i) next to NetFetch",
-                "Scroll down → Configure Proxy → Manual",
+                "Configure Proxy → Manual",
                 "Server: ${config.hostIp}  |  Port: ${config.proxyPort}",
-                "Tap Save"
+                "Save"
             ),
             steps = listOf(
-                "1. Connect your iPhone/iPad to the NetFetch Wi-Fi network.",
-                "2. Go to Settings → Wi-Fi.",
-                "3. Tap the blue (i) icon next to the NetFetch network name.",
-                "4. Scroll down and tap 'Configure Proxy'.",
-                "5. Select 'Manual'. Enter Server: ${config.hostIp} and Port: ${config.proxyPort}.",
-                "6. Tap Save (top right). Internet should now work through NetFetch."
+                "1. Connect to the NetFetch Wi-Fi network.",
+                "2. Open Settings → Wi-Fi.",
+                "3. Tap the information icon next to the NetFetch network.",
+                "4. Tap 'Configure Proxy'.",
+                "5. Select 'Manual'.",
+                "6. Enter Server: ${config.hostIp} and Port: ${config.proxyPort}.",
+                "7. Save and test an HTTPS website."
             )
         )
 
@@ -143,16 +278,17 @@ fun HelpScreen(config: HotspotConfig) {
             diagramBoxes = listOf(
                 "System Settings → Network → Wi-Fi → Details",
                 "Proxies tab",
-                "Enable: Web Proxy (HTTP) + Secure Proxy (HTTPS)",
+                "Web Proxy (HTTP) + Secure Web Proxy (HTTPS)",
                 "Server: ${config.hostIp}  |  Port: ${config.proxyPort}"
             ),
             steps = listOf(
                 "1. Connect your Mac to the NetFetch Wi-Fi network.",
-                "2. Go to System Settings → Network → Wi-Fi → Details...",
-                "3. Click the 'Proxies' tab.",
-                "4. Enable 'Web Proxy (HTTP)'. Set server: ${config.hostIp} port: ${config.proxyPort}.",
-                "5. Enable 'Secure Web Proxy (HTTPS)'. Use the same address and port.",
-                "6. Click OK, then Apply."
+                "2. Open System Settings → Network → Wi-Fi → Details.",
+                "3. Open the 'Proxies' section.",
+                "4. Enable Web Proxy (HTTP).",
+                "5. Set server: ${config.hostIp} port: ${config.proxyPort}.",
+                "6. Enable Secure Web Proxy (HTTPS) with the same address and port.",
+                "7. Apply the settings."
             )
         )
 
@@ -163,24 +299,25 @@ fun HelpScreen(config: HotspotConfig) {
             title = "Linux Setup",
             diagramTitle = "[ Linux Proxy Configuration ]",
             diagramBoxes = listOf(
-                "Option A: System proxy via GNOME / KDE Settings",
-                "Option B: Environment variables",
-                "HTTP_PROXY=http://${config.hostIp}:${config.proxyPort}",
-                "HTTPS_PROXY=http://${config.hostIp}:${config.proxyPort}"
+                "System Proxy → Manual",
+                "HTTP: ${config.hostIp}:${config.proxyPort}",
+                "HTTPS: ${config.hostIp}:${config.proxyPort}",
+                "PAC: http://${config.hostIp}:${config.pacPort}/wpad.dat"
             ),
             steps = listOf(
-                "GNOME:",
-                "1. Settings → Network → Network Proxy → Manual.",
-                "2. HTTP Proxy: ${config.hostIp}  Port: ${config.proxyPort}.",
-                "3. HTTPS Proxy: ${config.hostIp}  Port: ${config.proxyPort}. Apply.",
+                "GNOME / KDE:",
+                "1. Open Network Proxy settings.",
+                "2. Select Manual proxy configuration.",
+                "3. HTTP Proxy: ${config.hostIp} Port ${config.proxyPort}.",
+                "4. HTTPS Proxy: ${config.hostIp} Port ${config.proxyPort}.",
                 "",
-                "Terminal (per-session):",
+                "Terminal:",
                 "export HTTP_PROXY=http://${config.hostIp}:${config.proxyPort}",
                 "export HTTPS_PROXY=http://${config.hostIp}:${config.proxyPort}",
                 "export http_proxy=http://${config.hostIp}:${config.proxyPort}",
                 "export https_proxy=http://${config.hostIp}:${config.proxyPort}",
                 "",
-                "For PAC URL support, enter in browser proxy settings:",
+                "PAC URL:",
                 "http://${config.hostIp}:${config.pacPort}/wpad.dat"
             )
         )
@@ -192,34 +329,39 @@ fun HelpScreen(config: HotspotConfig) {
             title = "Android Client Setup",
             diagramTitle = "[ Android Wi-Fi Proxy Settings ]",
             diagramBoxes = listOf(
-                "Wi-Fi → Long-press NetFetch network",
+                "Wi-Fi → NetFetch network",
                 "Modify Network → Advanced Options",
                 "Proxy → Manual",
-                "Proxy Host: ${config.hostIp}  |  Port: ${config.proxyPort}"
+                "Host: ${config.hostIp}  |  Port: ${config.proxyPort}"
             ),
-            steps = listOf(
-                "1. Connect your Android device to the NetFetch Wi-Fi network.",
-                "2. Go to Wi-Fi settings and long-press the NetFetch network name.",
-                "3. Tap 'Modify Network' or the pencil/edit icon.",
-                "4. Expand 'Advanced Options' or 'Proxy Settings'.",
-                "5. Change Proxy from 'None' to 'Manual'.",
-                "6. Proxy hostname: ${config.hostIp}, Proxy port: ${config.proxyPort}.",
-                "7. Save the network settings.",
-                "8. Open a browser and test an HTTPS website.",
-                "",
-                "HTTP/HTTPS proxy:",
-                "${config.hostIp}:${config.proxyPort}",
-                "Best for browsers and apps that honor the Android Wi-Fi proxy.",
-                "",
-                "PAC configuration:",
-                "http://${config.hostIp}:${config.pacPort}/wpad.dat",
-                "Use this when the device or browser supports automatic proxy configuration.",
-                "",
-                "SOCKS5 (Pro):",
-                "${config.hostIp}:${config.socksPort}",
-                "TCP CONNECT only. UDP ASSOCIATE is not supported.",
-                "Use a SOCKS5-capable app when you need SOCKS5 instead of the system HTTP proxy."
-            )
+            steps = buildList {
+                add("1. Connect the Android device to the NetFetch Wi-Fi network.")
+                add("2. Open the Wi-Fi network details.")
+                add("3. Select Modify/Edit network if available.")
+                add("4. Open Advanced Options or Proxy Settings.")
+                add("5. Set Proxy to Manual.")
+                add("6. Enter Proxy hostname: ${config.hostIp}.")
+                add("7. Enter Proxy port: ${config.proxyPort}.")
+                add("8. Save the network settings.")
+                add("9. Open a browser and test an HTTPS website.")
+                add("")
+                add("HTTP/HTTPS proxy:")
+                add("${config.hostIp}:${config.proxyPort}")
+                add("This works for browsers and apps that honor the Android Wi-Fi proxy.")
+                add("")
+                add("PAC:")
+                add("http://${config.hostIp}:${config.pacPort}/wpad.dat")
+                add("Use this when the device or browser supports automatic proxy configuration.")
+
+                if (isPro) {
+                    add("")
+                    add("SOCKS5 (Pro):")
+                    add("${config.hostIp}:${config.socksPort}")
+                    add("Username: ${config.socksUsername}")
+                    add("Password: ${config.socksPassword}")
+                    add("SOCKS5 supports TCP CONNECT. It is separate from the Pro TCP/UDP gateway.")
+                }
+            }
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -243,37 +385,51 @@ fun HelpScreen(config: HotspotConfig) {
 
                 FaqItem(
                     question = "Connected to NetFetch but there is no internet",
-                    answer = "First confirm that the NetFetch phone itself has working internet. " +
-                            "Then check that the client is connected to the correct NetFetch network " +
-                            "and that the proxy address and port match the values shown on the Home screen."
+                    answer = "First confirm that the NetFetch phone itself has working Internet. " +
+                            "Then verify the client is connected to the correct NetFetch Wi-Fi network " +
+                            "and that the displayed proxy or gateway information is being used."
                 )
 
                 FaqItem(
-                    question = "The proxy does not connect",
-                    answer = "Make sure NetFetch is Active and the displayed gateway address is reachable " +
-                            "from the client device. Check that the HTTP proxy port is correct. " +
-                            "If using SOCKS5, verify the SOCKS5 username and password in NetFetch Settings."
+                    question = "Normal mode does not work",
+                    answer = "Normal mode requires the client application to honor the HTTP, HTTPS or PAC proxy. " +
+                            "Check that the proxy address is ${config.hostIp} and the HTTP proxy port is ${config.proxyPort}. " +
+                            "Normal mode does not use the Android VPN gateway."
                 )
 
                 FaqItem(
-                    question = "Some apps work but other apps do not",
-                    answer = "This is expected with proxy-based networking. Only applications that honor the " +
-                            "configured HTTP, HTTPS, PAC, or SOCKS5 proxy can use that path. " +
-                            "Apps that require direct networking or UDP may not work."
+                    question = "Pro mode does not start",
+                    answer = "Android must grant NetFetch VPN permission for Pro mode. " +
+                            "If the permission dialog was cancelled, stop NetFetch and start Pro again."
+                )
+
+                FaqItem(
+                    question = "Pro mode is slower than Normal mode",
+                    answer = "Pro performs additional routing through the Android TUN gateway and userspace TCP/UDP processing. " +
+                            "That adds processing overhead compared with the simpler HTTP proxy path. " +
+                            "The active upstream network still determines the available Internet speed."
                 )
 
                 FaqItem(
                     question = "SOCKS5 works for browsing but a game does not connect",
-                    answer = "NetFetch SOCKS5 currently supports TCP CONNECT only. " +
-                            "Games or applications that require UDP traffic cannot use the SOCKS5 tunnel."
+                    answer = "The SOCKS5 server supports TCP CONNECT. It does not implement SOCKS5 UDP ASSOCIATE. " +
+                            "Applications that specifically use SOCKS5 UDP should use the Pro gateway path instead."
                 )
 
                 FaqItem(
                     question = "The NetFetch network is not visible",
                     answer = "Wi-Fi Direct availability depends on the Android device and its current network state. " +
-                            "Keep Wi-Fi enabled, keep NetFetch Active, and check that Android has granted " +
-                            "the required nearby Wi-Fi permissions."
+                            "Keep Wi-Fi enabled, keep NetFetch active, and make sure Android has granted the required " +
+                            "nearby Wi-Fi permissions."
                 )
+
+                if (isPro) {
+                    FaqItem(
+                        question = "Does Pro require root?",
+                        answer = "No. Pro uses Android's user-approved VpnService interface for its TUN gateway. " +
+                                "Root access is not required."
+                    )
+                }
             }
         }
 
@@ -297,23 +453,28 @@ fun HelpScreen(config: HotspotConfig) {
                 Spacer(modifier = Modifier.height(12.dp))
 
                 FaqItem(
-                    question = "Why must I configure a proxy manually?",
-                    answer = "Android does not allow unrooted apps to create transparent NAT routing. " +
-                            "NetFetch runs an HTTP/SOCKS5 proxy server instead, which requires manual " +
-                            "configuration on connected devices. Root is not needed."
+                    question = "Why must Normal mode use a proxy?",
+                    answer = "Normal mode is designed as the lightweight proxy path. " +
+                            "Connected devices must configure the HTTP/HTTPS proxy or PAC settings. " +
+                            "It does not request Android VPN permission."
                 )
 
                 FaqItem(
-                    question = "Why does SOCKS5 say 'TCP only'?",
-                    answer = "Android prevents non-root apps from relaying UDP packets for arbitrary " +
-                            "clients on Wi-Fi Direct. UDP ASSOCIATE is therefore not implemented. " +
-                            "Applications requiring UDP (some games) will not work over SOCKS5."
+                    question = "What is the difference between Normal and Pro?",
+                    answer = "Normal uses HTTP/HTTPS proxy and PAC configuration. " +
+                            "Pro adds a SOCKS5 service and the Android TUN gateway for advanced IPv4 TCP/UDP routing."
                 )
 
                 FaqItem(
-                    question = "The gateway IP is different — what should I enter?",
-                    answer = "Check the 'Gateway' field in the NetFetch status dashboard on the Home screen. " +
-                            "NetFetch detects the actual Wi-Fi Direct interface address and shows it there."
+                    question = "Why does Pro need VPN permission?",
+                    answer = "Android requires user approval before an application can create a VpnService tunnel. " +
+                            "NetFetch uses that approved tunnel for the Pro TCP/UDP gateway."
+                )
+
+                FaqItem(
+                    question = "What should I enter when the gateway IP changes?",
+                    answer = "Use the Gateway or proxy address displayed on the NetFetch Home screen. " +
+                            "Wi-Fi Direct interface addresses can change between sessions."
                 )
 
                 FaqItem(
@@ -322,6 +483,8 @@ fun HelpScreen(config: HotspotConfig) {
                 )
             }
         }
+
+        Spacer(modifier = Modifier.height(24.dp))
     }
 }
 
@@ -335,7 +498,7 @@ private fun ArchBox(text: String) {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 1.dp),
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            textAlign = TextAlign.Center
         )
     } else {
         Surface(
@@ -352,7 +515,7 @@ private fun ArchBox(text: String) {
                 fontWeight = FontWeight.SemiBold,
                 color = TextDark,
                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                textAlign = TextAlign.Center
             )
         }
     }
@@ -387,11 +550,23 @@ fun VisualHelpGuideItem(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(icon, contentDescription = null, tint = PrimaryBlack)
+
                     Spacer(modifier = Modifier.width(12.dp))
-                    Text(title, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = TextDark)
+
+                    Text(
+                        title,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = TextDark
+                    )
                 }
+
                 Icon(
-                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    imageVector = if (expanded) {
+                        Icons.Default.ExpandLess
+                    } else {
+                        Icons.Default.ExpandMore
+                    },
                     contentDescription = null,
                     tint = TextMuted
                 )
@@ -402,8 +577,14 @@ fun VisualHelpGuideItem(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(CreamBackground, shape = RoundedCornerShape(12.dp))
-                            .border(BorderStroke(1.dp, PrimaryBlack), shape = RoundedCornerShape(12.dp))
+                            .background(
+                                CreamBackground,
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            .border(
+                                BorderStroke(1.dp, PrimaryBlack),
+                                shape = RoundedCornerShape(12.dp)
+                            )
                             .padding(12.dp)
                     ) {
                         Column {
@@ -413,6 +594,7 @@ fun VisualHelpGuideItem(
                                 fontWeight = FontWeight.Bold,
                                 color = PrimaryBlack
                             )
+
                             Spacer(modifier = Modifier.height(8.dp))
 
                             diagramBoxes.forEach { box ->
@@ -429,7 +611,10 @@ fun VisualHelpGuideItem(
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         color = TextDark,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                        modifier = Modifier.padding(
+                                            horizontal = 10.dp,
+                                            vertical = 6.dp
+                                        )
                                     )
                                 }
                             }
@@ -439,11 +624,19 @@ fun VisualHelpGuideItem(
                     Spacer(modifier = Modifier.height(12.dp))
 
                     steps.forEach { step ->
+                        val isCode = step.startsWith("export") ||
+                                step.startsWith("http") ||
+                                step.matches(Regex("^\\S+:\\d+$"))
+
                         Text(
                             text = step,
                             fontSize = 13.sp,
-                            color = if (step.startsWith("export") || step.startsWith("http")) TextDark.copy(alpha = 0.85f) else TextDark,
-                            fontFamily = if (step.startsWith("export") || step.startsWith("http")) androidx.compose.ui.text.font.FontFamily.Monospace else androidx.compose.ui.text.font.FontFamily.Default,
+                            color = TextDark,
+                            fontFamily = if (isCode) {
+                                FontFamily.Monospace
+                            } else {
+                                FontFamily.Default
+                            },
                             modifier = Modifier.padding(vertical = 2.dp)
                         )
                     }
@@ -456,7 +649,17 @@ fun VisualHelpGuideItem(
 @Composable
 fun FaqItem(question: String, answer: String) {
     Column(modifier = Modifier.padding(vertical = 6.dp)) {
-        Text(question, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextDark)
-        Text(answer, fontSize = 12.sp, color = TextMuted)
+        Text(
+            question,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = TextDark
+        )
+
+        Text(
+            answer,
+            fontSize = 12.sp,
+            color = TextMuted
+        )
     }
 }

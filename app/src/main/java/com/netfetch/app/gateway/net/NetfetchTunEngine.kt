@@ -15,7 +15,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class NetfetchTunEngine(
     private val tunInterface: ParcelFileDescriptor,
-    private val connector: NetfetchDirectConnector
+    private val connector: NetfetchConnector,
+    private val enableUdp: Boolean = true
 ) {
 
     private val running = AtomicBoolean(false)
@@ -124,6 +125,10 @@ class NetfetchTunEngine(
             }
 
             PROTO_UDP -> {
+                if (!enableUdp) {
+                    return
+                }
+
                 val offset = ip.headerLength
                 val available =
                     ip.totalLength - offset

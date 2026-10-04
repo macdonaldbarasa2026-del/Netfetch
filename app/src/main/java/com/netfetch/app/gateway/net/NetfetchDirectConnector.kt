@@ -7,7 +7,7 @@ import java.net.Socket
 
 class NetfetchDirectConnector(
     private val socketProtector: NetfetchSocketProtector
-) {
+) : NetfetchConnector {
 
     fun connectTcp(
         destination: InetAddress,
