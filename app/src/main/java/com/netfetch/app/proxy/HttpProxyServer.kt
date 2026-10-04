@@ -28,6 +28,7 @@ import java.util.concurrent.atomic.AtomicLong
 class HttpProxyServer(
     private val port: Int = 8282,
     private val upstreamNetworkProvider: () -> Network? = { null },
+    private val clientAuthorizer: (String) -> Boolean = { true },
     private val onClientActivity: (Map<String, ClientDevice>) -> Unit,
     private val onBandwidthUpdate: (uploadSpeed: Long, downloadSpeed: Long, totalBytes: Long) -> Unit
 ) {
@@ -39,6 +40,7 @@ class HttpProxyServer(
     private val connectedClientsMap = ConcurrentHashMap<String, ClientDevice>()
     private val clientUploadBytes = ConcurrentHashMap<String, AtomicLong>()
     private val clientDownloadBytes = ConcurrentHashMap<String, AtomicLong>()
+    private val clientConnectionCounts = ConcurrentHashMap<String, AtomicLong>()
 
     private val totalUploadCounter = AtomicLong(0L)
     private val totalDownloadCounter = AtomicLong(0L)
@@ -75,12 +77,12 @@ class HttpProxyServer(
                 while (isRunning && !serverSocket!!.isClosed) {
                     try {
                         val clientSocket = serverSocket!!.accept()
+                        if (!clientSemaphore.tryAcquire()) {
+                            Log.w(TAG, "HTTP proxy client concurrency limit reached; rejecting connection")
+                            runCatching { clientSocket.close() }
+                            continue
+                        }
                         proxyScope.launch {
-                            if (!clientSemaphore.tryAcquire()) {
-                                Log.w(TAG, "HTTP proxy client concurrency limit reached; rejecting connection")
-                                runCatching { clientSocket.close() }
-                                return@launch
-                            }
                             try {
                                 handleClientSocket(clientSocket)
                             } finally {
@@ -101,9 +103,16 @@ class HttpProxyServer(
 
     private suspend fun handleClientSocket(clientSocket: Socket) {
         val clientIp = clientSocket.inetAddress?.hostAddress ?: "Unknown"
-        trackClientConnection(clientIp)
 
         try {
+            if (!clientAuthorizer(clientIp)) {
+                clientSocket.getOutputStream().write(
+                    "HTTP/1.1 407 Proxy Authentication Required\r\nConnection: close\r\n\r\n"
+                        .toByteArray(Charsets.ISO_8859_1)
+                )
+                return
+            }
+            trackClientConnection(clientIp)
             clientSocket.soTimeout = READ_TIMEOUT_MS
             val clientIn = clientSocket.getInputStream()
             val clientOut = clientSocket.getOutputStream()
@@ -144,6 +153,7 @@ class HttpProxyServer(
             Log.d(TAG, "Client socket handler finished ($clientIp): ${e.message}")
         } finally {
             try { clientSocket.close() } catch (_: Exception) {}
+            releaseClientConnection(clientIp)
         }
     }
 
@@ -498,7 +508,19 @@ class HttpProxyServer(
                     connectedTimestamp = now
                 )
         }
+        clientConnectionCounts.computeIfAbsent(clientIp) { AtomicLong() }.incrementAndGet()
         notifyClientsChanged()
+    }
+
+    private fun releaseClientConnection(clientIp: String) {
+        val remaining = clientConnectionCounts[clientIp]?.decrementAndGet() ?: return
+        if (remaining <= 0) {
+            clientConnectionCounts.remove(clientIp)
+            connectedClientsMap.remove(clientIp)
+            clientUploadBytes.remove(clientIp)
+            clientDownloadBytes.remove(clientIp)
+            notifyClientsChanged()
+        }
     }
 
     private fun recordBytes(clientIp: String, count: Long, isUpload: Boolean) {
@@ -578,5 +600,9 @@ class HttpProxyServer(
             Log.e(TAG, "Error closing server socket: ${e.message}")
         }
         proxyScope.cancel()
+        connectedClientsMap.clear()
+        clientConnectionCounts.clear()
+        clientUploadBytes.clear()
+        clientDownloadBytes.clear()
     }
 }

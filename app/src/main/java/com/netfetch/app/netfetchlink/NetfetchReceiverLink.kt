@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class NetfetchReceiverLink(
     private val context: Context,
+    private val requestedMode: () -> String,
     private val onStateChanged: (NetfetchReceiverState) -> Unit
 ) {
     companion object {
@@ -60,6 +61,8 @@ class NetfetchReceiverLink(
 
     private val reconnectScheduled =
         AtomicBoolean(false)
+
+    private var reconnectAttempts = 0
 
     @Volatile
     private var connecting = false
@@ -148,6 +151,15 @@ class NetfetchReceiverLink(
                     if (stopped) return@NetfetchReceiverDiscovery
 
                     if (connecting) {
+                        return@NetfetchReceiverDiscovery
+                    }
+
+                    if (provider.mode != requestedMode()) {
+                        onStateChanged(
+                            NetfetchReceiverState.Unsupported(
+                                "This provider uses ${provider.mode.lowercase()} mode. Switch modes to connect."
+                            )
+                        )
                         return@NetfetchReceiverDiscovery
                     }
 
@@ -282,6 +294,10 @@ class NetfetchReceiverLink(
                         NetfetchLinkClient()
                             .openSession(providerHost = providerAddress)
 
+                    if (session.mode != provider.mode || session.mode != requestedMode()) {
+                        throw IllegalStateException("Provider mode changed or is incompatible")
+                    }
+
                     if (stopped) return@Thread
 
                     Log.i(
@@ -295,6 +311,7 @@ class NetfetchReceiverLink(
 
                         connecting = false
                         connected = true
+                        reconnectAttempts = 0
                         activeSessionToken = session.token
                         activeProviderAddress = providerAddress
 
@@ -364,6 +381,10 @@ class NetfetchReceiverLink(
             NetfetchReceiverState.Reconnecting(reason)
         )
 
+        val retryDelay = (RECONNECT_DELAY_MS * (1L shl reconnectAttempts.coerceAtMost(4)))
+            .coerceAtMost(30_000L)
+        reconnectAttempts = (reconnectAttempts + 1).coerceAtMost(5)
+
         mainHandler.postDelayed(
             {
                 reconnectScheduled.set(false)
@@ -372,7 +393,7 @@ class NetfetchReceiverLink(
                     searchForProvider()
                 }
             },
-            RECONNECT_DELAY_MS
+            retryDelay
         )
     }
 

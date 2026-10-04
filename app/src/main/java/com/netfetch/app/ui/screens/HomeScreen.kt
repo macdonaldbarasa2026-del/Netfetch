@@ -367,8 +367,8 @@ fun HomeScreen(
                             sb.appendLine("PAC URL: http://${config.hostIp}:${config.pacPort}/wpad.dat")
                             if (config.mode == TetherMode.PRO) {
                                 sb.appendLine("SOCKS5 Port: ${config.socksPort}")
-                                sb.appendLine("SOCKS5 Username: ${config.socksUsername}")
-                                sb.appendLine("SOCKS5 Password: ${config.socksPassword}")
+                                sb.appendLine("NetFetch receivers discover and authenticate to this provider in-app.")
+                                sb.appendLine("Do not share proxy credentials in messages.")
                             }
                             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                                 type = "text/plain"
@@ -513,7 +513,7 @@ private fun NetfetchReceiverCard(
             )
 
             Text(
-                text = "Connect to a nearby NetFetch provider automatically — Normal (HTTP/PAC) or Pro (SOCKS5 tunnel). No manual settings required.",
+                text = "Discover a nearby provider for the selected mode. Pro starts a TCP VPN tunnel; Normal provides authenticated HTTP/PAC details for proxy configuration.",
                 fontSize = 12.sp,
                 color = TextMuted
             )
@@ -550,9 +550,10 @@ private fun NetfetchReceiverCard(
                 is NetfetchReceiverState.Connected -> {
                     val modeLabel = if (state.providerMode == "PRO") "Pro" else "Normal"
                     val transportLabel = if (state.providerMode == "PRO") {
-                        "SOCKS5 VPN tunnel active"
+                        "Provider session established; receiver TCP VPN is starting"
                     } else {
-                        "HTTP proxy: ${state.providerAddress}:${state.httpPort}\nPAC: http://${state.providerAddress}:${state.pacPort}/wpad.dat"
+                        "Provider session established. Configure this device's HTTP proxy or PAC before browsing:\n" +
+                            "HTTP ${state.providerAddress}:${state.httpPort}\nPAC: http://${state.providerAddress}:${state.pacPort}/wpad.dat"
                     }
 
                     ReceiverStatusText(

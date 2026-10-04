@@ -2,7 +2,7 @@ package com.netfetch.app.model
 
 enum class TetherMode(val displayName: String, val description: String) {
     NORMAL("Normal Mode", "Standard HTTP/HTTPS Proxy (Port 8282) - For Web, Streaming & Videos"),
-    PRO("Pro Mode (Advanced)", "SOCKS5 + TCP/UDP Gateway - Advanced app and network routing")
+    PRO("Pro Mode (Advanced)", "Authenticated SOCKS5 TCP + receiver VPN routing")
 }
 
 data class HotspotConfig(
@@ -15,6 +15,8 @@ data class HotspotConfig(
     val socksPassword: String = "netfetch1080",
     val pacPort: Int = 8283,
     val mode: TetherMode = TetherMode.NORMAL,
+    /** Requested only. It remains inactive until a negotiated UDP data plane exists. */
+    val udpForwarding: Boolean = false,
     val bandPreference: BandPreference = BandPreference.AUTO,
     val maxConnectedClients: Int = 10,
     val autoStartOnBoot: Boolean = false

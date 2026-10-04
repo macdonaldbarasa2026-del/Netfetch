@@ -27,12 +27,14 @@ import java.net.Socket
 class PacServer(
     private val pacPort: Int = 8283,
     private val proxyHost: String = "192.168.49.1",
-    private val proxyPort: Int = 8282
+    private val proxyPort: Int = 8282,
+    private val clientAuthorizer: (String) -> Boolean = { true }
 ) {
     private val TAG = "NetFetchPAC"
     private var serverSocket: ServerSocket? = null
     @Volatile private var isRunning = false
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val clientSemaphore = kotlinx.coroutines.sync.Semaphore(20)
 
     fun start() {
         if (isRunning) return
@@ -49,7 +51,17 @@ class PacServer(
                 while (isRunning && !serverSocket!!.isClosed) {
                     try {
                         val client = serverSocket!!.accept()
-                        scope.launch { handlePacClient(client) }
+                        if (!clientSemaphore.tryAcquire()) {
+                            runCatching { client.close() }
+                            continue
+                        }
+                        scope.launch {
+                            try {
+                                handlePacClient(client)
+                            } finally {
+                                clientSemaphore.release()
+                            }
+                        }
                     } catch (e: Exception) {
                         if (isRunning) Log.e(TAG, "PAC client accept error: ${e.message}")
                     }
@@ -62,6 +74,14 @@ class PacServer(
 
     private fun handlePacClient(client: Socket) {
         try {
+            val clientIp = client.inetAddress?.hostAddress.orEmpty()
+            if (!clientAuthorizer(clientIp)) {
+                client.getOutputStream().write(
+                    "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+                        .toByteArray(Charsets.ISO_8859_1)
+                )
+                return
+            }
             client.soTimeout = 5000
             val input = client.getInputStream()
             val out: OutputStream = client.getOutputStream()

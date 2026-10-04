@@ -55,6 +55,7 @@ class NetfetchProviderDiscovery(
             put(NetfetchLinkProtocol.KEY_HTTP_PORT, httpPort.toString())
             put(NetfetchLinkProtocol.KEY_PAC_PORT, pacPort.toString())
             put(NetfetchLinkProtocol.KEY_SSID, ssid)
+            put(NetfetchLinkProtocol.KEY_UDP, NetfetchLinkProtocol.UDP_TRANSPORT_AVAILABLE.toString())
 
             // SOCKS port only meaningful in Pro mode.
             if (mode == NetfetchLinkProtocol.MODE_PRO) {

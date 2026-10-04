@@ -76,9 +76,11 @@ class NetfetchTunEngine(
             while (running.get()) {
                 val length = input.read(buffer)
 
-                if (length <= 0) {
+                if (length == 0) {
                     continue
                 }
+
+                if (length < 0) break
 
                 handlePacket(
                     buffer.copyOf(length)
@@ -171,24 +173,12 @@ class NetfetchTunEngine(
         }
 
         /*
-         * Apply bounded backpressure instead of silently dropping packets.
-         * The queue remains strictly bounded.
+         * Writer callbacks run from flow workers and TCP housekeeping. Never
+         * wait here: a saturated TUN writer must not serialize every flow
+         * behind it. TCP retains unacknowledged segments for retransmission;
+         * UDP is intentionally lossy under congestion.
          */
-        while (running.get()) {
-            try {
-                if (writeQueue.offer(
-                        packet,
-                        100,
-                        java.util.concurrent.TimeUnit.MILLISECONDS
-                    )
-                ) {
-                    return
-                }
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-                return
-            }
-        }
+        writeQueue.offer(packet)
     }
 
     private fun writeLoop() {

@@ -174,6 +174,7 @@ class HotspotService : Service() {
         proxyServer = HttpProxyServer(
             port = config.proxyPort,
             upstreamNetworkProvider = { NetfetchUpstreamRuntime.currentNetwork() },
+            clientAuthorizer = { address -> linkServer?.isClientAuthorized(address) == true },
             onClientActivity = { clientsMap ->
                 activeClients =
                     clientRegistry.publishTrafficClients(
@@ -214,7 +215,9 @@ class HotspotService : Service() {
                 socksPort = config.socksPort,
                 username = config.socksUsername,
                 password = config.socksPassword,
-                sessionValidator = { token -> linkServer?.validateSession(token) == true },
+                sessionValidator = { token, address ->
+                    linkServer?.validateSession(token, address) == true
+                },
                 upstreamNetworkProvider = { NetfetchUpstreamRuntime.currentNetwork() },
                 onClientActivity = { clientsMap ->
                     activeClients =
@@ -304,12 +307,7 @@ class HotspotService : Service() {
 
             if (!isActive) return@launch
 
-            if (config.mode == TetherMode.PRO) {
-                Log.i(TAG, "Verified upstream is ready; starting Pro TUN gateway")
-                startVpnGateway()
-            } else {
-                Log.i(TAG, "Verified upstream is ready; Normal mode uses HTTP/PAC proxy only")
-            }
+            Log.i(TAG, "Verified upstream is ready; provider proxy services can accept traffic")
 
             // 7. Periodic internet verification
             startInternetMonitor()
@@ -320,7 +318,8 @@ class HotspotService : Service() {
         pacServer = PacServer(
             pacPort = config.pacPort,
             proxyHost = gateway,
-            proxyPort = config.proxyPort
+            proxyPort = config.proxyPort,
+            clientAuthorizer = { address -> linkServer?.isClientAuthorized(address) == true }
         ).also { it.start() }
     }
 

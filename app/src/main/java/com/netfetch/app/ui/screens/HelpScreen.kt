@@ -87,12 +87,11 @@ fun HelpScreen(config: HotspotConfig) {
 
                 Text(
                     text = if (isPro) {
-                        "Pro uses the SOCKS5 service plus an Android VPN/TUN gateway. " +
-                                "The gateway handles IPv4 TCP and UDP traffic for advanced routing. " +
-                                "Android asks for VPN permission before Pro networking can start."
+                        "Pro uses an authenticated Netfetch link, SOCKS5 TCP transport and a receiver Android VPN/TUN. " +
+                                "UDP forwarding is not available in this release. Android asks the receiving device for VPN permission."
                     } else {
                         "Normal uses the HTTP/HTTPS proxy and PAC configuration. " +
-                                "It does not use the Android VPN gateway and does not require VPN permission."
+                                "It does not use Android VPN. A Netfetch receiver discovers and authenticates first; Android does not let an ordinary app set a device-wide proxy automatically."
                     },
                     fontSize = 12.sp,
                     color = TextMuted
@@ -132,11 +131,10 @@ fun HelpScreen(config: HotspotConfig) {
                 Text(
                     text = if (isPro) {
                         "Pro mode uses the phone's active Wi-Fi or mobile-data connection as the upstream. " +
-                                "Connected devices use the NetFetch Wi-Fi connection, while the Pro gateway " +
-                                "handles routed IPv4 TCP/UDP traffic."
+                        "A receiver creates an authenticated Wi-Fi Direct session and sends TCP through its VPN/TUN and the provider SOCKS5 transport. UDP is unavailable."
                     } else {
                         "Normal mode uses the phone's active Wi-Fi or mobile-data connection as the upstream. " +
-                                "Connected devices reach the Internet through the NetFetch HTTP/HTTPS proxy or PAC configuration."
+                        "A Netfetch receiver discovers and authenticates to the provider, then uses the advertised HTTP/HTTPS proxy or PAC configuration."
                     },
                     fontSize = 12.sp,
                     color = TextMuted
@@ -147,13 +145,13 @@ fun HelpScreen(config: HotspotConfig) {
                 if (isPro) {
                     ArchBox("Your Phone Internet (Wi-Fi or Mobile Data)")
                     ArchBox("↓")
-                    ArchBox("NetFetch Pro Gateway + SOCKS5 :${config.socksPort}")
+                    ArchBox("NetFetch Pro SOCKS5 TCP :${config.socksPort}")
                     ArchBox("↓")
                     ArchBox("Wi-Fi Direct (SSID: DIRECT-NetFetch-*)")
                     ArchBox("↓")
                     ArchBox("Client Device")
                     ArchBox("↓")
-                    ArchBox("Routed IPv4 TCP/UDP Internet Traffic")
+                    ArchBox("Routed IPv4 TCP Internet Traffic (UDP unavailable)")
                 } else {
                     ArchBox("Your Phone Internet (Wi-Fi or Mobile Data)")
                     ArchBox("↓")
@@ -200,22 +198,22 @@ fun HelpScreen(config: HotspotConfig) {
 
                     FaqItem(
                         question = "Why does Pro request VPN permission?",
-                        answer = "The Pro TCP/UDP gateway uses Android VpnService to receive and route " +
-                                "IPv4 traffic. This requires the Android system VPN permission. " +
+                        answer = "The receiver TCP gateway uses Android VpnService to receive and route " +
+                                "IPv4 TCP traffic. This requires the Android system VPN permission. " +
                                 "No root access is required."
                     )
 
                     FaqItem(
                         question = "What does the Pro gateway support?",
-                        answer = "The built-in gateway currently handles IPv4 TCP and UDP traffic. " +
-                                "It is separate from the SOCKS5 server."
+                        answer = "The built-in receiver path handles IPv4 TCP traffic through the provider SOCKS5 server. " +
+                                "UDP forwarding can be requested in Settings, but it remains unavailable until an authenticated provider/receiver UDP transport is negotiated. SOCKS5 UDP ASSOCIATE is not used."
                     )
 
                     FaqItem(
                         question = "Is SOCKS5 the same as the Pro gateway?",
                         answer = "No. SOCKS5 is an additional proxy interface on port ${config.socksPort}. " +
                                 "The SOCKS5 implementation supports TCP CONNECT. The separate Pro TUN gateway " +
-                                "handles routed IPv4 TCP and UDP traffic."
+                                "handles routed IPv4 TCP traffic; UDP is unavailable."
                     )
                 }
             }
@@ -359,7 +357,7 @@ fun HelpScreen(config: HotspotConfig) {
                     add("${config.hostIp}:${config.socksPort}")
                     add("Username: ${config.socksUsername}")
                     add("Password: ${config.socksPassword}")
-                    add("SOCKS5 supports TCP CONNECT. It is separate from the Pro TCP/UDP gateway.")
+                    add("SOCKS5 supports TCP CONNECT only; SOCKS5 UDP ASSOCIATE is unavailable.")
                 }
             }
         )
@@ -405,7 +403,7 @@ fun HelpScreen(config: HotspotConfig) {
 
                 FaqItem(
                     question = "Pro mode is slower than Normal mode",
-                    answer = "Pro performs additional routing through the Android TUN gateway and userspace TCP/UDP processing. " +
+                    answer = "Pro performs additional routing through the Android TUN gateway and userspace TCP processing. " +
                             "That adds processing overhead compared with the simpler HTTP proxy path. " +
                             "The active upstream network still determines the available Internet speed."
                 )
@@ -462,13 +460,13 @@ fun HelpScreen(config: HotspotConfig) {
                 FaqItem(
                     question = "What is the difference between Normal and Pro?",
                     answer = "Normal uses HTTP/HTTPS proxy and PAC configuration. " +
-                            "Pro adds a SOCKS5 service and the Android TUN gateway for advanced IPv4 TCP/UDP routing."
+                            "Pro adds an authenticated SOCKS5 TCP service and a receiver Android TUN for IPv4 TCP routing; UDP is unavailable."
                 )
 
                 FaqItem(
                     question = "Why does Pro need VPN permission?",
                     answer = "Android requires user approval before an application can create a VpnService tunnel. " +
-                            "NetFetch uses that approved tunnel for the Pro TCP/UDP gateway."
+                            "NetFetch uses that approved tunnel for the Pro TCP gateway."
                 )
 
                 FaqItem(

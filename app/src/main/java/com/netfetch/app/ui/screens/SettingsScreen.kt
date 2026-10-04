@@ -23,6 +23,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.netfetch.app.model.BandPreference
 import com.netfetch.app.model.HotspotConfig
+import com.netfetch.app.model.TetherMode
+import com.netfetch.app.netfetchlink.NetfetchLinkProtocol
 import com.netfetch.app.ui.theme.*
 
 @Composable
@@ -73,6 +75,10 @@ fun SettingsScreen(
         mutableStateOf(config.maxConnectedClients.toFloat())
     }
 
+    var udpForwarding by remember(config.udpForwarding) {
+        mutableStateOf(config.udpForwarding)
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -94,6 +100,39 @@ fun SettingsScreen(
         )
 
         Spacer(modifier = Modifier.height(20.dp))
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = CardWhite),
+            border = BorderStroke(1.dp, SurfaceBorder),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Pro transport", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextDark)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(
+                        checked = udpForwarding,
+                        onCheckedChange = { enabled ->
+                            udpForwarding = enabled
+                            onUpdateConfig(config.copy(udpForwarding = enabled))
+                        },
+                        enabled = config.mode == TetherMode.PRO
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text("UDP forwarding", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            if (NetfetchLinkProtocol.UDP_TRANSPORT_AVAILABLE) "Available when negotiated with the provider."
+                            else "UDP unavailable on this connection. The preference is retained but TCP-only routing remains active.",
+                            fontSize = 12.sp,
+                            color = TextMuted
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         Card(
             colors = CardDefaults.cardColors(containerColor = CardWhite),

@@ -14,6 +14,10 @@ object NetfetchLinkProtocol {
     const val KEY_HTTP_PORT = "httpport"
     const val KEY_PAC_PORT = "pacport"
     const val KEY_SSID = "ssid"
+    const val KEY_UDP = "udp"
+
+    /** No authenticated receiver/provider UDP data plane exists yet. */
+    const val UDP_TRANSPORT_AVAILABLE = false
 
     /** Mode values advertised in DNS-SD TXT record and sent over the link protocol. */
     const val MODE_NORMAL = "NORMAL"

@@ -11,6 +11,7 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.DatagramSocket
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ArrayBlockingQueue
 
 /**
  * Owns direct upstream UDP flows for the TUN gateway.
@@ -25,7 +26,9 @@ class NetfetchUdpSessionManager(
     private data class Session(
         val key: UdpFlowKey,
         val socket: DatagramSocket,
-        val job: Job
+        val readerJob: Job,
+        val writerJob: Job,
+        val outgoing: ArrayBlockingQueue<ByteArray>
     )
 
     private val scope =
@@ -63,7 +66,19 @@ class NetfetchUdpSessionManager(
                 )
             )
 
-            val job = scope.launch {
+            val outgoing = ArrayBlockingQueue<ByteArray>(64)
+            val writerJob = scope.launch {
+                try {
+                    while (!socket.isClosed) {
+                        val data = outgoing.take()
+                        socket.send(DatagramPacket(data, data.size))
+                    }
+                } catch (_: Exception) {
+                    close(key)
+                }
+            }
+
+            val readerJob = scope.launch {
                 val buffer = ByteArray(65_507)
 
                 try {
@@ -94,13 +109,16 @@ class NetfetchUdpSessionManager(
             val session = Session(
                 key = key,
                 socket = socket,
-                job = job
+                readerJob = readerJob,
+                writerJob = writerJob,
+                outgoing = outgoing
             )
 
             val existing = sessions.putIfAbsent(key, session)
 
             if (existing != null) {
-                job.cancel()
+                readerJob.cancel()
+                writerJob.cancel()
                 runCatching { socket.close() }
                 return true
             }
@@ -117,30 +135,17 @@ class NetfetchUdpSessionManager(
     ): Boolean {
         val session = sessions[key] ?: return false
 
-        /*
-         * Dispatch the send on Dispatchers.IO rather than the caller's thread
-         * (which is the TUN packet reader). A slow or blocked upstream socket
-         * must not stall the entire TUN reader.
-         *
-         * Fire-and-forget is acceptable for UDP: if the upstream is so slow
-         * that it cannot keep up, the DatagramSocket's send buffer fills and
-         * send() will throw, which closes the session.
-         */
-        scope.launch {
-            try {
-                session.socket.send(DatagramPacket(data, data.size))
-            } catch (_: Exception) {
-                close(key)
-            }
-        }
-
-        return true
+        // UDP is lossy by design. A bounded queue prevents a burst from
+        // creating one coroutine and retained byte array per datagram.
+        return session.outgoing.offer(data)
     }
 
     fun close(key: UdpFlowKey) {
         val session = sessions.remove(key) ?: return
 
-        session.job.cancel()
+        session.readerJob.cancel()
+        session.writerJob.cancel()
+        session.outgoing.clear()
         runCatching { session.socket.close() }
     }
 

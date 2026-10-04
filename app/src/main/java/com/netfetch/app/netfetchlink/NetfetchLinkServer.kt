@@ -50,6 +50,7 @@ class NetfetchLinkServer(
 
     private data class Session(
         val token: String,
+        val clientAddress: String,
         @Volatile var expiresAt: Long
     )
 
@@ -142,7 +143,7 @@ class NetfetchLinkServer(
                         .removePrefix("NETFETCH/1 REFRESH ")
                         .trim()
 
-                    if (validateSession(token)) {
+                    if (validateSession(token, it.inetAddress.hostAddress.orEmpty())) {
                         writer.println("NETFETCH/1 REFRESHED")
                     } else {
                         writer.println("NETFETCH/1 ERROR Invalid or expired session")
@@ -156,7 +157,7 @@ class NetfetchLinkServer(
                     return
                 }
 
-                val token = createToken()
+                val token = createToken(it.inetAddress.hostAddress.orEmpty())
 
                 writer.println("NETFETCH/1 OK")
                 writer.println("SESSION $token")
@@ -176,7 +177,7 @@ class NetfetchLinkServer(
         }
     }
 
-    private fun createToken(): String {
+    private fun createToken(clientAddress: String): String {
         val bytes = ByteArray(TOKEN_BYTES)
         random.nextBytes(bytes)
 
@@ -186,13 +187,14 @@ class NetfetchLinkServer(
 
         sessions[token] = Session(
             token = token,
+            clientAddress = clientAddress,
             expiresAt = System.currentTimeMillis() + TOKEN_TTL_MS
         )
 
         return token
     }
 
-    fun validateSession(token: String): Boolean {
+    fun validateSession(token: String, clientAddress: String? = null): Boolean {
         val session = sessions[token]
             ?: return false
 
@@ -203,10 +205,26 @@ class NetfetchLinkServer(
             return false
         }
 
+        // A link token is issued after the Wi-Fi Direct peer has connected.
+        // Binding it to that peer prevents a token observed on the local link
+        // from being replayed by a different downstream device.
+        if (clientAddress != null && clientAddress != session.clientAddress) {
+            return false
+        }
+
         // Sliding expiry: active receivers keep their session alive.
         session.expiresAt = now + TOKEN_TTL_MS
 
         return true
+    }
+
+    /** Authorizes Normal HTTP/PAC traffic after a successful link handshake. */
+    fun isClientAuthorized(clientAddress: String): Boolean {
+        if (clientAddress.isBlank()) return false
+        val now = System.currentTimeMillis()
+        return sessions.values.any { session ->
+            session.clientAddress == clientAddress && now <= session.expiresAt
+        }
     }
 
     private fun cleanupExpiredSessions() {

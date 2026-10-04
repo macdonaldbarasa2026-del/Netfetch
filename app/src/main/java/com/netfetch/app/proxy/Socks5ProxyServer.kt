@@ -30,7 +30,7 @@ class Socks5ProxyServer(
     private val socksPort: Int = 1080,
     private val username: String? = null,
     private val password: String? = null,
-    private val sessionValidator: ((String) -> Boolean)? = null,
+    private val sessionValidator: ((String, String) -> Boolean)? = null,
     private val upstreamNetworkProvider: () -> Network? = { null },
     private val onClientActivity: (Map<String, ClientDevice>) -> Unit,
     private val onBandwidthUpdate: (uploadSpeed: Long, downloadSpeed: Long, totalBytes: Long) -> Unit
@@ -211,7 +211,7 @@ class Socks5ProxyServer(
                         suppliedUsername == "netfetch-session" &&
                         sessionValidator != null
                     ) {
-                        sessionValidator.invoke(suppliedPassword)
+                        sessionValidator.invoke(suppliedPassword, clientIp)
                     } else {
                         suppliedUsername == username &&
                             suppliedPassword == password

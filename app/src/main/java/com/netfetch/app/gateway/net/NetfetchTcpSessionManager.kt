@@ -29,14 +29,15 @@ class NetfetchTcpSessionManager(
         const val SOCKET_BUFFER_SIZE = 256 * 1024
     }
 
-    private data class Session(
+    private class Session(
         val key: TcpFlowKey,
         val socket: Socket,
         val output: java.io.OutputStream,
-        val writeQueue: ArrayBlockingQueue<ByteArray>,
-        val readerJob: Job,
-        val writerJob: Job
-    )
+        val writeQueue: ArrayBlockingQueue<ByteArray>
+    ) {
+        lateinit var readerJob: Job
+        lateinit var writerJob: Job
+    }
 
     private val scope =
         CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -72,7 +73,10 @@ class NetfetchTcpSessionManager(
             return true
         }
 
-        val job = scope.launch {
+        // Register the connecting marker before this coroutine can run. A
+        // retransmitted SYN must observe it instead of starting a duplicate
+        // outbound connection.
+        val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
                 /*
                  * This is the critical change:
@@ -99,7 +103,22 @@ class NetfetchTcpSessionManager(
                         WRITE_QUEUE_CAPACITY
                     )
 
-                val writerJob = scope.launch {
+                val session = Session(
+                    key = key,
+                    socket = socket,
+                    output = output,
+                    writeQueue = queue
+                )
+
+                val existing = sessions.putIfAbsent(key, session)
+                if (existing != null) {
+                    runCatching { socket.close() }
+                    return@launch
+                }
+
+                connecting.remove(key)
+
+                session.writerJob = scope.launch {
                     try {
                         while (!socket.isClosed) {
                             val data = queue.take()
@@ -112,7 +131,7 @@ class NetfetchTcpSessionManager(
                     }
                 }
 
-                val readerJob = scope.launch {
+                session.readerJob = scope.launch {
                     val buffer = ByteArray(64 * 1024)
 
                     try {
@@ -140,10 +159,10 @@ class NetfetchTcpSessionManager(
                          * Session termination is handled below.
                          */
                     } finally {
-                        sessions.remove(key)
+                        sessions.remove(key, session)
                         connecting.remove(key)
 
-                        writerJob.cancel()
+                        session.writerJob.cancel()
 
                         runCatching {
                             socket.close()
@@ -153,39 +172,8 @@ class NetfetchTcpSessionManager(
                     }
                 }
 
-                val session =
-                    Session(
-                        key = key,
-                        socket = socket,
-                        output = output,
-                        writeQueue = queue,
-                        readerJob = readerJob,
-                        writerJob = writerJob
-                    )
-
-                val existing =
-                    sessions.putIfAbsent(
-                        key,
-                        session
-                    )
-
-                if (existing != null) {
-                    readerJob.cancel()
-                    writerJob.cancel()
-
-                    runCatching {
-                        socket.close()
-                    }
-
-                    return@launch
-                }
-
-                connecting.remove(key)
-
-                /*
-                 * Tell the TCP engine only after the real upstream socket
-                 * is ready.
-                 */
+                // Publish the SYN-ACK only once both workers exist; an early
+                // client payload can then never race a partially-built session.
                 onConnected(key)
 
             } catch (_: Exception) {
@@ -204,6 +192,8 @@ class NetfetchTcpSessionManager(
             job.cancel()
             return true
         }
+
+        job.start()
 
         return true
     }

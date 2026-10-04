@@ -72,6 +72,8 @@ class MainActivity : ComponentActivity() {
             socksPort = prefs.getInt("socks_port", 1080),
             socksUsername = prefs.getString("socks_username", "netfetch") ?: "netfetch",
             socksPassword = prefs.getString("socks_password", "netfetch1080") ?: "netfetch1080",
+            mode = TetherMode.entries.getOrElse(prefs.getInt("mode", TetherMode.NORMAL.ordinal)) { TetherMode.NORMAL },
+            udpForwarding = prefs.getBoolean("udp_forwarding", false),
             bandPreference = band,
             maxConnectedClients = prefs.getInt("max_clients", 10)
         )
@@ -85,6 +87,8 @@ class MainActivity : ComponentActivity() {
             .putInt("socks_port", config.socksPort)
             .putString("socks_username", config.socksUsername)
             .putString("socks_password", config.socksPassword)
+            .putInt("mode", config.mode.ordinal)
+            .putBoolean("udp_forwarding", config.udpForwarding)
             .putInt("band_preference", config.bandPreference.ordinal)
             .putInt("max_clients", config.maxConnectedClients)
             .apply()
@@ -163,6 +167,13 @@ class MainActivity : ComponentActivity() {
 
         receiverLink = NetfetchReceiverLink(
             context = this,
+            requestedMode = {
+                if (configStateFlow.value.mode == TetherMode.PRO) {
+                    com.netfetch.app.netfetchlink.NetfetchLinkProtocol.MODE_PRO
+                } else {
+                    com.netfetch.app.netfetchlink.NetfetchLinkProtocol.MODE_NORMAL
+                }
+            },
             onStateChanged = { receiverState ->
                 runOnUiThread {
                     receiverStateFlow.value = receiverState
@@ -297,6 +308,11 @@ class MainActivity : ComponentActivity() {
                                 config = config,
                                 onToggleHotspot = { checkPermissionsAndToggle() },
                                 onModeChange = { mode ->
+                                    if (config.mode == mode) return@HomeScreen
+                                    // A receiver link is mode-specific. Tear it down before
+                                    // changing the source of truth so a stale VPN/proxy path
+                                    // cannot remain active under the new label.
+                                    stopReceiverConnection()
                                     config = config.copy(mode = mode)
                                     if (state is HotspotState.Active) {
                                         startHotspotService(config)
@@ -373,17 +389,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startHotspotService(config: HotspotConfig) {
-        // Normal mode uses the HTTP/PAC proxy path and does not need
-        // Android VPN permission. Pro mode uses the TUN gateway.
-        if (config.mode == TetherMode.PRO) {
-            val vpnIntent = VpnService.prepare(this)
-
-            if (vpnIntent != null) {
-                vpnPermissionLauncher.launch(vpnIntent)
-                return
-            }
-        }
-
         startHotspotServiceAfterVpnPermission(config)
     }
 
