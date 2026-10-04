@@ -480,12 +480,11 @@ class HttpProxyServer(
     }
 
     private fun pipeStreams(clientIp: String, input: InputStream, output: OutputStream, isUpload: Boolean) {
-        val buffer = ByteArray(8192)
+        val buffer = ByteArray(64 * 1024)
         try {
             var read: Int
             while (input.read(buffer).also { read = it } != -1) {
                 output.write(buffer, 0, read)
-                output.flush()
                 recordBytes(clientIp, read.toLong(), isUpload)
             }
         } catch (_: Exception) {

@@ -23,6 +23,7 @@ class NetfetchTcpSessionManager(
     private data class Session(
         val key: TcpFlowKey,
         val socket: Socket,
+        val output: java.io.OutputStream,
         val job: Job
     )
 
@@ -49,8 +50,16 @@ class NetfetchTcpSessionManager(
                 port = destinationPort
             )
 
+            // Larger buffers help sustain high-throughput transfers through
+            // the userspace TUN gateway.
+            socket.receiveBufferSize = 256 * 1024
+            socket.sendBufferSize = 256 * 1024
+            socket.keepAlive = true
+
+            val output = socket.getOutputStream()
+
             val job = scope.launch {
-                val buffer = ByteArray(16 * 1024)
+                val buffer = ByteArray(64 * 1024)
 
                 try {
                     val input = socket.getInputStream()
@@ -83,6 +92,7 @@ class NetfetchTcpSessionManager(
             val session = Session(
                 key = key,
                 socket = socket,
+                output = output,
                 job = job
             )
 
@@ -107,8 +117,7 @@ class NetfetchTcpSessionManager(
         val session = sessions[key] ?: return false
 
         return try {
-            session.socket.getOutputStream().write(data)
-            session.socket.getOutputStream().flush()
+            session.output.write(data)
             true
         } catch (_: Exception) {
             close(key)

@@ -174,7 +174,6 @@ class NetfetchTunEngine(
                     writeQueue.take()
 
                 output.write(packet)
-                output.flush()
             }
         } catch (_: Exception) {
             if (running.get()) {
