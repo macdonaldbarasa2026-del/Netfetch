@@ -282,7 +282,10 @@ class HttpProxyServer(
     ) {
         try {
             val targetSocket = openUpstreamSocket(host, port)
-            targetSocket.soTimeout = READ_TIMEOUT_MS
+
+            // Established CONNECT tunnels must support long-lived connections.
+            targetSocket.soTimeout = 0
+            clientSocket.soTimeout = 0
 
             val okResponse = "HTTP/1.1 200 Connection Established\r\nProxy-Agent: NetFetch/1.0\r\n\r\n"
             clientOut.write(okResponse.toByteArray(Charsets.ISO_8859_1))
@@ -291,15 +294,44 @@ class HttpProxyServer(
             val targetIn = targetSocket.getInputStream()
             val targetOut = targetSocket.getOutputStream()
 
-            val job1 = proxyScope.launch { pipeStreams(clientIp, clientIn, targetOut, isUpload = true) }
-            val job2 = proxyScope.launch { pipeStreams(clientIp, targetIn, clientOut, isUpload = false) }
-
-            runBlocking {
-                job1.join()
-                job2.join()
+            val job1 = proxyScope.launch {
+                pipeStreams(clientIp, clientIn, targetOut, isUpload = true)
             }
 
-            try { targetSocket.close() } catch (_: Exception) {}
+            val job2 = proxyScope.launch {
+                pipeStreams(clientIp, targetIn, clientOut, isUpload = false)
+            }
+
+            try {
+                // End the tunnel when either direction finishes.
+                kotlinx.coroutines.selects.select<Unit> {
+                    job1.onJoin { }
+                    job2.onJoin { }
+                }
+            } finally {
+                job1.cancel()
+                job2.cancel()
+
+                try {
+                    clientSocket.close()
+                } catch (_: Exception) {
+                }
+
+                try {
+                    targetSocket.close()
+                } catch (_: Exception) {
+                }
+
+                try {
+                    job1.join()
+                } catch (_: Exception) {
+                }
+
+                try {
+                    job2.join()
+                } catch (_: Exception) {
+                }
+            }
 
         } catch (e: Exception) {
             Log.d(TAG, "HTTPS CONNECT tunnel error for $host:$port -> ${e.message}")
@@ -359,7 +391,10 @@ class HttpProxyServer(
             }
 
             val targetSocket = openUpstreamSocket(host, port)
-            targetSocket.soTimeout = READ_TIMEOUT_MS
+
+            // Established HTTP proxy tunnels must support long-lived connections.
+            targetSocket.soTimeout = 0
+            clientSocket.soTimeout = 0
 
             val targetOut = targetSocket.getOutputStream()
             val targetIn = targetSocket.getInputStream()
@@ -391,15 +426,44 @@ class HttpProxyServer(
             targetOut.write("\r\n".toByteArray(Charsets.ISO_8859_1))
             targetOut.flush()
 
-            val job1 = proxyScope.launch { pipeStreams(clientIp, clientIn, targetOut, isUpload = true) }
-            val job2 = proxyScope.launch { pipeStreams(clientIp, targetIn, clientOut, isUpload = false) }
-
-            runBlocking {
-                job1.join()
-                job2.join()
+            val job1 = proxyScope.launch {
+                pipeStreams(clientIp, clientIn, targetOut, isUpload = true)
             }
 
-            try { targetSocket.close() } catch (_: Exception) {}
+            val job2 = proxyScope.launch {
+                pipeStreams(clientIp, targetIn, clientOut, isUpload = false)
+            }
+
+            try {
+                // End the HTTP tunnel when either direction finishes.
+                kotlinx.coroutines.selects.select<Unit> {
+                    job1.onJoin { }
+                    job2.onJoin { }
+                }
+            } finally {
+                job1.cancel()
+                job2.cancel()
+
+                try {
+                    clientSocket.close()
+                } catch (_: Exception) {
+                }
+
+                try {
+                    targetSocket.close()
+                } catch (_: Exception) {
+                }
+
+                try {
+                    job1.join()
+                } catch (_: Exception) {
+                }
+
+                try {
+                    job2.join()
+                } catch (_: Exception) {
+                }
+            }
 
         } catch (e: Exception) {
             Log.d(TAG, "HTTP tunnel error -> ${e.message}")
