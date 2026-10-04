@@ -302,34 +302,36 @@ class HttpProxyServer(
                 pipeStreams(clientIp, targetIn, clientOut, isUpload = false)
             }
 
-            try {
-                // End the tunnel when either direction finishes.
-                kotlinx.coroutines.selects.select<Unit> {
-                    job1.onJoin { }
-                    job2.onJoin { }
-                }
-            } finally {
-                job1.cancel()
-                job2.cancel()
-
+            runBlocking {
                 try {
-                    clientSocket.close()
-                } catch (_: Exception) {
-                }
+                    // End the tunnel when either direction finishes.
+                    kotlinx.coroutines.selects.select<Unit> {
+                        job1.onJoin { }
+                        job2.onJoin { }
+                    }
+                } finally {
+                    job1.cancel()
+                    job2.cancel()
 
-                try {
-                    targetSocket.close()
-                } catch (_: Exception) {
-                }
+                    try {
+                        clientSocket.close()
+                    } catch (_: Exception) {
+                    }
 
-                try {
-                    job1.join()
-                } catch (_: Exception) {
-                }
+                    try {
+                        targetSocket.close()
+                    } catch (_: Exception) {
+                    }
 
-                try {
-                    job2.join()
-                } catch (_: Exception) {
+                    try {
+                        job1.join()
+                    } catch (_: Exception) {
+                    }
+
+                    try {
+                        job2.join()
+                    } catch (_: Exception) {
+                    }
                 }
             }
 
@@ -434,34 +436,36 @@ class HttpProxyServer(
                 pipeStreams(clientIp, targetIn, clientOut, isUpload = false)
             }
 
-            try {
-                // End the HTTP tunnel when either direction finishes.
-                kotlinx.coroutines.selects.select<Unit> {
-                    job1.onJoin { }
-                    job2.onJoin { }
-                }
-            } finally {
-                job1.cancel()
-                job2.cancel()
-
+            runBlocking {
                 try {
-                    clientSocket.close()
-                } catch (_: Exception) {
-                }
+                    // End the HTTP tunnel when either direction finishes.
+                    kotlinx.coroutines.selects.select<Unit> {
+                        job1.onJoin { }
+                        job2.onJoin { }
+                    }
+                } finally {
+                    job1.cancel()
+                    job2.cancel()
 
-                try {
-                    targetSocket.close()
-                } catch (_: Exception) {
-                }
+                    try {
+                        clientSocket.close()
+                    } catch (_: Exception) {
+                    }
 
-                try {
-                    job1.join()
-                } catch (_: Exception) {
-                }
+                    try {
+                        targetSocket.close()
+                    } catch (_: Exception) {
+                    }
 
-                try {
-                    job2.join()
-                } catch (_: Exception) {
+                    try {
+                        job1.join()
+                    } catch (_: Exception) {
+                    }
+
+                    try {
+                        job2.join()
+                    } catch (_: Exception) {
+                    }
                 }
             }
 
