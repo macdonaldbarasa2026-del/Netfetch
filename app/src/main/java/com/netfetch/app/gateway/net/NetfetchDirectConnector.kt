@@ -9,7 +9,7 @@ class NetfetchDirectConnector(
     private val socketProtector: NetfetchSocketProtector
 ) : NetfetchConnector {
 
-    fun connectTcp(
+    override fun connectTcp(
         destination: InetAddress,
         port: Int,
         timeoutMs: Int = 10_000
@@ -37,7 +37,7 @@ class NetfetchDirectConnector(
         }
     }
 
-    fun openUdp(): DatagramSocket {
+    override fun openUdp(): DatagramSocket {
         return socketProtector.openUdpSocket()
     }
 }

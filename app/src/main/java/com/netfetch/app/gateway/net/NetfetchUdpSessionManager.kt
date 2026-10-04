@@ -19,7 +19,7 @@ import java.util.concurrent.ConcurrentHashMap
  * stays on the selected Android Network and is protected from the VPN loop.
  */
 class NetfetchUdpSessionManager(
-    private val connector: NetfetchDirectConnector
+    private val connector: NetfetchConnector
 ) {
 
     private data class Session(

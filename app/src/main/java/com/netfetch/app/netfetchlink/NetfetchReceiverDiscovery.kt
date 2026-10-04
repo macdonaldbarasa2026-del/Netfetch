@@ -4,8 +4,8 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pDevice
-import android.net.wifi.p2p.WifiP2pDnsSdServiceRequest
 import android.net.wifi.p2p.WifiP2pManager
+import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest
 import android.util.Log
 
 class NetfetchReceiverDiscovery(
@@ -36,8 +36,8 @@ class NetfetchReceiverDiscovery(
 
     private var request: WifiP2pDnsSdServiceRequest? = null
 
-    private val devices =
-        HashMap<String, WifiP2pDevice>()
+    private val providers =
+        HashMap<String, Provider>()
 
     @SuppressLint("MissingPermission")
     fun start() {
@@ -64,9 +64,15 @@ class NetfetchReceiverDiscovery(
                     )
                 ) {
                     val provider =
-                        devices[device.deviceAddress]
+                        providers[device.deviceAddress]
 
                     if (provider != null) {
+                        Log.i(
+                            TAG,
+                            "NetFetch provider service found: " +
+                                device.deviceName
+                        )
+
                         onProviderFound(provider)
                     }
                 }
@@ -108,12 +114,14 @@ class NetfetchReceiverDiscovery(
                     ]?.toIntOrNull()
                         ?: NetfetchLinkProtocol.DEFAULT_SOCKS_PORT
 
-                devices[device.deviceAddress] =
+                val provider =
                     Provider(
                         device = device,
                         ssid = ssid,
                         socksPort = port
                     )
+
+                providers[device.deviceAddress] = provider
 
                 Log.i(
                     TAG,
@@ -121,15 +129,19 @@ class NetfetchReceiverDiscovery(
                         "${device.deviceName} " +
                         "${device.deviceAddress}"
                 )
+
+                onProviderFound(provider)
             }
         )
 
-        request =
+        val serviceRequest =
             WifiP2pDnsSdServiceRequest.newInstance()
+
+        request = serviceRequest
 
         wifiManager.addServiceRequest(
             p2pChannel,
-            request,
+            serviceRequest,
             object : WifiP2pManager.ActionListener {
                 override fun onSuccess() {
                     discoverServices()
@@ -170,17 +182,19 @@ class NetfetchReceiverDiscovery(
 
     @SuppressLint("MissingPermission")
     fun connect(provider: Provider) {
-        val wifiManager = manager
-            ?: run {
-                onError("Wi-Fi Direct unavailable.")
-                return
-            }
+        val wifiManager =
+            manager
+                ?: run {
+                    onError("Wi-Fi Direct unavailable.")
+                    return
+                }
 
-        val p2pChannel = channel
-            ?: run {
-                onError("Wi-Fi Direct channel unavailable.")
-                return
-            }
+        val p2pChannel =
+            channel
+                ?: run {
+                    onError("Wi-Fi Direct channel unavailable.")
+                    return
+                }
 
         val config =
             WifiP2pConfig().apply {
@@ -213,10 +227,10 @@ class NetfetchReceiverDiscovery(
         val wifiManager = manager ?: return
         val p2pChannel = channel ?: return
 
-        request?.let {
+        request?.let { serviceRequest ->
             wifiManager.removeServiceRequest(
                 p2pChannel,
-                it,
+                serviceRequest,
                 object : WifiP2pManager.ActionListener {
                     override fun onSuccess() {}
 
@@ -231,6 +245,6 @@ class NetfetchReceiverDiscovery(
         }
 
         request = null
-        devices.clear()
+        providers.clear()
     }
 }

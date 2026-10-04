@@ -500,8 +500,7 @@ private fun NetfetchReceiverCard(
 
                 is NetfetchReceiverState.ProviderFound -> {
                     ReceiverStatusText(
-                        text = "Provider found: ${state.deviceName}
-Connecting..."
+                        text = "Provider found: ${state.deviceName}\nConnecting..."
                     )
                 }
 

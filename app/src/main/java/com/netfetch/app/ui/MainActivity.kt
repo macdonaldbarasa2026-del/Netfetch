@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -34,6 +35,7 @@ import kotlinx.coroutines.launch
 import com.netfetch.app.model.BandPreference
 import com.netfetch.app.model.HotspotConfig
 import com.netfetch.app.model.HotspotState
+import com.netfetch.app.model.TetherMode
 import com.netfetch.app.service.HotspotService
 import com.netfetch.app.service.NetfetchReceiverVpnService
 import com.netfetch.app.netfetchlink.NetfetchReceiverLink

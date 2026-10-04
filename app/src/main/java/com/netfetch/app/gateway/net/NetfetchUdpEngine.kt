@@ -8,7 +8,7 @@ import java.util.concurrent.ConcurrentHashMap
  * upstream UDP traffic and writes the responses back into TUN.
  */
 class NetfetchUdpEngine(
-    private val connector: NetfetchDirectConnector,
+    private val connector: NetfetchConnector,
     private val writer: (ByteArray) -> Unit
 ) {
 

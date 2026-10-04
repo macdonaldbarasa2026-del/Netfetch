@@ -2,7 +2,7 @@ package com.netfetch.app.netfetchlink
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.net.wifi.p2p.WifiP2pDnsSdServiceInfo
+import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo
 import android.net.wifi.p2p.WifiP2pManager
 import android.util.Log
 
