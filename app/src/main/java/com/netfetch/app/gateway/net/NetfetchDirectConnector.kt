@@ -12,7 +12,7 @@ class NetfetchDirectConnector(
     override fun connectTcp(
         destination: InetAddress,
         port: Int,
-        timeoutMs: Int = 10_000
+        timeoutMs: Int
     ): Socket {
         val socket = socketProtector.openTcpSocket()
 
