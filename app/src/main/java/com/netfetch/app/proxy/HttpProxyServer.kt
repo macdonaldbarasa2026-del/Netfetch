@@ -92,29 +92,20 @@ class HttpProxyServer(
             val clientIn = clientSocket.getInputStream()
             val clientOut = clientSocket.getOutputStream()
 
-            val headerLines = mutableListOf<String>()
-            val reader = clientIn.bufferedReader(Charsets.ISO_8859_1)
-            var firstLine: String?
-
-            try {
-                firstLine = reader.readLine()
+            val headerLines = try {
+                readHttpHeaders(clientIn)
             } catch (e: Exception) {
+                Log.d(TAG, "Unable to read HTTP headers from $clientIp: ${e.message}")
                 clientSocket.close()
                 return
             }
 
-            if (firstLine.isNullOrEmpty()) {
+            if (headerLines.isEmpty()) {
                 clientSocket.close()
                 return
             }
 
-            headerLines.add(firstLine)
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                if (line.isNullOrEmpty()) break
-                headerLines.add(line!!)
-            }
-
+            val firstLine = headerLines[0]
             val parts = firstLine.split(" ")
             if (parts.size < 2) {
                 clientSocket.close()
@@ -138,6 +129,75 @@ class HttpProxyServer(
         } finally {
             try { clientSocket.close() } catch (_: Exception) {}
         }
+    }
+
+    /**
+     * Reads exactly one HTTP request header block from the raw socket.
+     *
+     * This deliberately does NOT use BufferedReader/InputStreamReader.
+     * A buffered character reader may consume bytes belonging to the
+     * request body while looking for the end of the headers. Those bytes
+     * would then be trapped inside the reader buffer and would never reach
+     * tunnelHttp()/pipeStreams().
+     *
+     * By reading bytes directly until CRLF-CRLF, the same InputStream remains
+     * positioned immediately after the HTTP headers, so POST/PUT/PATCH bodies
+     * and uploads are preserved.
+     */
+    private fun readHttpHeaders(input: InputStream): List<String> {
+        val buffer = java.io.ByteArrayOutputStream()
+        val maxHeaderBytes = 64 * 1024
+
+        var previous3 = -1
+        var previous2 = -1
+        var previous1 = -1
+
+        while (buffer.size() < maxHeaderBytes) {
+            val value = input.read()
+
+            if (value == -1) {
+                break
+            }
+
+            buffer.write(value)
+
+            if (
+                previous3 == '\r'.code &&
+                previous2 == '\n'.code &&
+                previous1 == '\r'.code &&
+                value == '\n'.code
+            ) {
+                break
+            }
+
+            previous3 = previous2
+            previous2 = previous1
+            previous1 = value
+        }
+
+        if (buffer.size() == 0) {
+            return emptyList()
+        }
+
+        if (buffer.size() >= maxHeaderBytes) {
+            throw java.io.IOException(
+                "HTTP header block exceeds ${maxHeaderBytes} bytes"
+            )
+        }
+
+        val headerText =
+            buffer.toString(Charsets.ISO_8859_1.name())
+
+        if (!headerText.endsWith("\r\n\r\n")) {
+            throw java.io.IOException(
+                "Incomplete HTTP header block"
+            )
+        }
+
+        return headerText
+            .removeSuffix("\r\n\r\n")
+            .split("\r\n")
+            .filter { it.isNotEmpty() }
     }
 
     private fun openUpstreamSocket(host: String, port: Int): Socket {
