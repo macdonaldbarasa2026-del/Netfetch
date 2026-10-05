@@ -105,11 +105,19 @@ class MainActivity : ComponentActivity() {
         NetfetchReceiverState.Connected? = null
 
     private val hotspotStateFlow = mutableStateOf<HotspotState>(HotspotState.Idle)
+    private var pendingHotspotConfig: HotspotConfig? = null
 
     private val vpnPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val config = pendingHotspotConfig
+            pendingHotspotConfig = null
+
             if (result.resultCode == RESULT_OK) {
-                startHotspotServiceAfterVpnPermission(configStateFlow.value)
+                startHotspotServiceAfterVpnPermission(config ?: configStateFlow.value)
+            } else if (config != null) {
+                hotspotStateFlow.value = HotspotState.Error(
+                    "Provider VPN permission was not granted."
+                )
             }
         }
     private val receiverVpnPermissionLauncher =
@@ -389,6 +397,16 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startHotspotService(config: HotspotConfig) {
+        if (config.mode == TetherMode.PRO) {
+            val vpnIntent = VpnService.prepare(this)
+
+            if (vpnIntent != null) {
+                pendingHotspotConfig = config
+                vpnPermissionLauncher.launch(vpnIntent)
+                return
+            }
+        }
+
         startHotspotServiceAfterVpnPermission(config)
     }
 

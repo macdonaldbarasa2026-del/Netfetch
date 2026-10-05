@@ -148,11 +148,11 @@ class HotspotService : Service() {
     fun startHotspot(config: HotspotConfig) {
         currentConfig = config
         _hotspotState.value = HotspotState.Starting
-        startForegroundServiceNotification("Starting NetFetch...")
+        if (!startForegroundServiceNotification("Starting NetFetch...")) {
+            return
+        }
 
-        // Stop existing instances cleanly
-        stopVpnGateway()
-        stopProxyServers()
+        stopRunningStackForRestart()
 
         // 1. Start upstream network detection
         upstreamNetworkManager?.let { NetfetchUpstreamRuntime.stop(it) }
@@ -291,7 +291,7 @@ class HotspotService : Service() {
         )
         wifiDirectManager?.startGroup(currentConfig)
 
-        // 6. Wait for a selected and verified upstream before
+        // 7. Wait for a selected and verified upstream before
         // starting the real IPv4 TUN gateway.
         gatewayStartJob?.cancel()
         gatewayStartJob = serviceScope.launch {
@@ -309,6 +309,10 @@ class HotspotService : Service() {
 
             Log.i(TAG, "Verified upstream is ready; provider proxy services can accept traffic")
 
+            if (currentConfig.mode == TetherMode.PRO) {
+                startVpnGateway()
+            }
+
             // 7. Periodic internet verification
             startInternetMonitor()
         }
@@ -321,6 +325,34 @@ class HotspotService : Service() {
             proxyPort = config.proxyPort,
             clientAuthorizer = { address -> linkServer?.isClientAuthorized(address) == true }
         ).also { it.start() }
+    }
+
+    private fun stopRunningStackForRestart() {
+        internetMonitorJob?.cancel()
+        internetMonitorJob = null
+
+        upstreamMonitorJob?.cancel()
+        upstreamMonitorJob = null
+
+        gatewayStartJob?.cancel()
+        gatewayStartJob = null
+
+        stopVpnGateway()
+        stopProxyServers()
+
+        wifiDirectManager?.stopGroup()
+        wifiDirectManager = null
+
+        upstreamNetworkManager?.let { NetfetchUpstreamRuntime.stop(it) }
+        upstreamNetworkManager = null
+
+        clientRegistry.clear()
+        activeClients = emptyList()
+        currentUpSpeed = 0L
+        currentDownSpeed = 0L
+        internetVerified = false
+        currentGateway = "192.168.49.1"
+        currentUpstreamState = UpstreamNetworkManager.UpstreamState()
     }
 
     private fun startInternetMonitor() {
@@ -413,19 +445,26 @@ class HotspotService : Service() {
         )
     }
 
-    private fun startForegroundServiceNotification(title: String) {
+    private fun startForegroundServiceNotification(title: String): Boolean {
         val notification = buildNotification(title, "Initialising network & proxy engine...")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            try {
-                val serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIF_ID,
+                    notification,
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-                } else 0
-                startForeground(NOTIF_ID, notification, serviceType)
-            } catch (e: Exception) {
+                )
+            } else {
                 startForeground(NOTIF_ID, notification)
             }
-        } else {
-            startForeground(NOTIF_ID, notification)
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Unable to promote HotspotService to foreground", e)
+            _hotspotState.value = HotspotState.Error(
+                "NetFetch could not start its foreground network service: ${e.message}"
+            )
+            stopSelf()
+            false
         }
     }
 
