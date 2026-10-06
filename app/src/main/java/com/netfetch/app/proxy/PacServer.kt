@@ -74,6 +74,7 @@ class PacServer(
 
     private fun handlePacClient(client: Socket) {
         try {
+            client.tcpNoDelay = true
             val clientIp = client.inetAddress?.hostAddress.orEmpty()
             if (!clientAuthorizer(clientIp)) {
                 client.getOutputStream().write(

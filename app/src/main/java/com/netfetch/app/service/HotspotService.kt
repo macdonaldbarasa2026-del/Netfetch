@@ -174,7 +174,7 @@ class HotspotService : Service() {
         proxyServer = HttpProxyServer(
             port = config.proxyPort,
             upstreamNetworkProvider = { NetfetchUpstreamRuntime.currentNetwork() },
-            clientAuthorizer = { address -> linkServer?.isClientAuthorized(address) == true },
+            clientAuthorizer = { address -> isClientAuthorized(address) },
             onClientActivity = { clientsMap ->
                 activeClients =
                     clientRegistry.publishTrafficClients(
@@ -209,32 +209,32 @@ class HotspotService : Service() {
             pacPort = config.pacPort
         ).also { it.start() }
 
-        // 4. Start SOCKS5 in Pro mode only (binds to upstream network)
-        if (config.mode == TetherMode.PRO) {
-            socks5Server = Socks5ProxyServer(
-                socksPort = config.socksPort,
-                username = config.socksUsername,
-                password = config.socksPassword,
-                sessionValidator = { token, address ->
+        // 4. Start SOCKS5 proxy server (available for companion receivers and SOCKS5 clients)
+        socks5Server = Socks5ProxyServer(
+            socksPort = config.socksPort,
+            username = config.socksUsername,
+            password = config.socksPassword,
+            sessionValidator = { token, address ->
+                // Allow all local hotspot clients or validated NetFetch sessions
+                address.startsWith("192.168.") || address.startsWith("10.") || address == "127.0.0.1" ||
                     linkServer?.validateSession(token, address) == true
-                },
-                upstreamNetworkProvider = { NetfetchUpstreamRuntime.currentNetwork() },
-                onClientActivity = { clientsMap ->
-                    activeClients =
-                        clientRegistry.publishTrafficClients(
-                            clientsMap.values.toList()
-                        )
-
-                    Log.i(
-                        TAG,
-                        "SOCKS5 clients updated: ${activeClients.size}"
+            },
+            upstreamNetworkProvider = { NetfetchUpstreamRuntime.currentNetwork() },
+            onClientActivity = { clientsMap ->
+                activeClients =
+                    clientRegistry.publishTrafficClients(
+                        clientsMap.values.toList()
                     )
 
-                    updateActiveState()
-                },
-                onBandwidthUpdate = { _, _, _ -> }
-            ).also { it.start() }
-        }
+                Log.i(
+                    TAG,
+                    "SOCKS5 clients updated: ${activeClients.size}"
+                )
+
+                updateActiveState()
+            },
+            onBandwidthUpdate = { _, _, _ -> }
+        ).also { it.start() }
 
         // 5. Start PAC server (initially with default gateway; updated after Wi-Fi Direct starts)
         startPacServer(config, currentGateway)
@@ -309,13 +309,19 @@ class HotspotService : Service() {
 
             Log.i(TAG, "Verified upstream is ready; provider proxy services can accept traffic")
 
-            if (currentConfig.mode == TetherMode.PRO) {
-                startVpnGateway()
-            }
-
             // 7. Periodic internet verification
             startInternetMonitor()
         }
+    }
+
+    private fun isClientAuthorized(address: String): Boolean {
+        if (address.isBlank()) return false
+        // Check if explicitly blocked in client registry
+        val client = clientRegistry.snapshot().find { it.ipAddress == address }
+        if (client?.isBlocked == true) return false
+
+        // Allow all devices on the local hotspot Wi-Fi network
+        return true
     }
 
     private fun startPacServer(config: HotspotConfig, gateway: String) {
@@ -323,7 +329,7 @@ class HotspotService : Service() {
             pacPort = config.pacPort,
             proxyHost = gateway,
             proxyPort = config.proxyPort,
-            clientAuthorizer = { address -> linkServer?.isClientAuthorized(address) == true }
+            clientAuthorizer = { address -> isClientAuthorized(address) }
         ).also { it.start() }
     }
 

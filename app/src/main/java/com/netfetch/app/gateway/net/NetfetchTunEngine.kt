@@ -45,6 +45,11 @@ class NetfetchTunEngine(
             writer = ::enqueue
         )
 
+    private val dnsExecutor =
+        java.util.concurrent.Executors.newFixedThreadPool(8) { r ->
+            Thread(r, "Netfetch-DnsResolver").apply { isDaemon = true }
+        }
+
     fun start() {
         if (!running.compareAndSet(false, true)) {
             return
@@ -152,6 +157,32 @@ class NetfetchTunEngine(
                         available
                     ) ?: return
 
+                if (udp.destinationPort == 53) {
+                    val payloadOffset = offset + 8
+                    val payloadLength = (udp.length - 8).coerceAtLeast(0)
+                    if (payloadOffset + payloadLength <= packet.size && payloadLength > 0) {
+                        val queryPayload = packet.copyOfRange(payloadOffset, payloadOffset + payloadLength)
+                        val dnsDest = PacketCodec.ipv4Address(ip.destinationIp)
+
+                        dnsExecutor.execute {
+                            val response = connector.resolveDns(dnsDest, queryPayload)
+                            if (response != null) {
+                                val replyPacket = PacketCodec.ipv4Udp(
+                                    sourceIp = ip.destinationIp,
+                                    destinationIp = ip.sourceIp,
+                                    sourcePort = udp.destinationPort,
+                                    destinationPort = udp.sourcePort,
+                                    payload = response
+                                )
+                                enqueue(replyPacket)
+                            } else {
+                                udpEngine.handle(packet, ip, udp)
+                            }
+                        }
+                        return
+                    }
+                }
+
                 udpEngine.handle(
                     packet = packet,
                     ip = ip,
@@ -221,6 +252,8 @@ class NetfetchTunEngine(
 
         readerThread = null
         writerThread = null
+
+        dnsExecutor.shutdownNow()
 
         writeQueue.clear()
 

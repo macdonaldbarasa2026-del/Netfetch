@@ -1,5 +1,15 @@
-/.gradle/
-*.keystore
-/.cxx/
-# Local/generated APK artifacts
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+build/
+app/build/
+.kotlin/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.ap_
+*.dex
 app-debug-apk/

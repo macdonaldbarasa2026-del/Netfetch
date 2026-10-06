@@ -231,6 +231,9 @@ fun HelpScreen(config: HotspotConfig) {
                 "Address: ${config.hostIp}  |  Port: ${config.proxyPort}",
                 "Save → Done"
             ),
+            visualMockup = {
+                WindowsVisualMockup(config.hostIp, config.proxyPort)
+            },
             steps = listOf(
                 "1. Connect your Windows PC to the NetFetch Wi-Fi network.",
                 "2. Open Settings → Network & Internet → Proxy.",
@@ -256,6 +259,9 @@ fun HelpScreen(config: HotspotConfig) {
                 "Server: ${config.hostIp}  |  Port: ${config.proxyPort}",
                 "Save"
             ),
+            visualMockup = {
+                IosVisualMockup(config.hostIp, config.proxyPort)
+            },
             steps = listOf(
                 "1. Connect to the NetFetch Wi-Fi network.",
                 "2. Open Settings → Wi-Fi.",
@@ -279,6 +285,9 @@ fun HelpScreen(config: HotspotConfig) {
                 "Web Proxy (HTTP) + Secure Web Proxy (HTTPS)",
                 "Server: ${config.hostIp}  |  Port: ${config.proxyPort}"
             ),
+            visualMockup = {
+                MacVisualMockup(config.hostIp, config.proxyPort, config.pacPort)
+            },
             steps = listOf(
                 "1. Connect your Mac to the NetFetch Wi-Fi network.",
                 "2. Open System Settings → Network → Wi-Fi → Details.",
@@ -332,6 +341,9 @@ fun HelpScreen(config: HotspotConfig) {
                 "Proxy → Manual",
                 "Host: ${config.hostIp}  |  Port: ${config.proxyPort}"
             ),
+            visualMockup = {
+                AndroidVisualMockup(config.hostIp, config.proxyPort)
+            },
             steps = buildList {
                 add("1. Connect the Android device to the NetFetch Wi-Fi network.")
                 add("2. Open the Wi-Fi network details.")
@@ -360,6 +372,30 @@ fun HelpScreen(config: HotspotConfig) {
                     add("SOCKS5 supports TCP CONNECT only; SOCKS5 UDP ASSOCIATE is unavailable.")
                 }
             }
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        VisualHelpGuideItem(
+            icon = Icons.Default.Share,
+            title = "NetFetch Android Companion Receiver",
+            diagramTitle = "[ Phone-to-Phone Fast Connection ]",
+            diagramBoxes = listOf(
+                "Step 1: Connect Phone B to Phone A's Wi-Fi network",
+                "Step 2: Open NetFetch on Phone B",
+                "Step 3: In Receiver section, tap 'Connect to Provider'",
+                "Step 4: Grant Android VPN permission"
+            ),
+            visualMockup = {
+                NetfetchCompanionVisualMockup(config.hostIp, config.socksPort)
+            },
+            steps = listOf(
+                "1. Connect Phone B to Phone A's Wi-Fi Direct network (SSID: ${config.ssid}).",
+                "2. Open NetFetch on Phone B.",
+                "3. In the Home Screen, tap 'Connect to Provider' on the NetFetch Receiver card.",
+                "4. When Android shows the VPN request prompt, tap OK.",
+                "5. The entire phone now has full internet access with zero manual proxy configuration!"
+            )
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -525,7 +561,8 @@ fun VisualHelpGuideItem(
     title: String,
     diagramTitle: String,
     diagramBoxes: List<String>,
-    steps: List<String>
+    steps: List<String>,
+    visualMockup: (@Composable () -> Unit)? = null
 ) {
     var expanded by remember { mutableStateOf(true) }
 
@@ -572,6 +609,11 @@ fun VisualHelpGuideItem(
 
             AnimatedVisibility(visible = expanded) {
                 Column(modifier = Modifier.padding(top = 12.dp)) {
+                    if (visualMockup != null) {
+                        visualMockup()
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -639,6 +681,349 @@ fun VisualHelpGuideItem(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun WindowsVisualMockup(hostIp: String, proxyPort: Int) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = androidx.compose.ui.graphics.Color(0xFF202020),
+        border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFF3B82F6)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.DesktopWindows,
+                        contentDescription = null,
+                        tint = androidx.compose.ui.graphics.Color(0xFF60A5FA),
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        "Windows Settings > Network & internet > Proxy",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = androidx.compose.ui.graphics.Color.White
+                    )
+                }
+                Text("— □ ✕", fontSize = 11.sp, color = androidx.compose.ui.graphics.Color.LightGray)
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Surface(
+                shape = RoundedCornerShape(6.dp),
+                color = androidx.compose.ui.graphics.Color(0xFF2D2D2D),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Use a proxy server",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = androidx.compose.ui.graphics.Color.White
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = androidx.compose.ui.graphics.Color(0xFF10B981)
+                        ) {
+                            Text(
+                                "ON",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = androidx.compose.ui.graphics.Color.White,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text("Proxy IP address", fontSize = 11.sp, color = androidx.compose.ui.graphics.Color.LightGray)
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = androidx.compose.ui.graphics.Color(0xFF1E1E1E),
+                        border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFF3B82F6)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            hostIp,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            color = androidx.compose.ui.graphics.Color(0xFF93C5FD),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Text("Port", fontSize = 11.sp, color = androidx.compose.ui.graphics.Color.LightGray)
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = androidx.compose.ui.graphics.Color(0xFF1E1E1E),
+                        border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFF3B82F6)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            proxyPort.toString(),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            color = androidx.compose.ui.graphics.Color(0xFF93C5FD),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = androidx.compose.ui.graphics.Color(0xFF2563EB),
+                        modifier = Modifier.align(Alignment.End)
+                    ) {
+                        Text(
+                            "Save",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = androidx.compose.ui.graphics.Color.White,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun IosVisualMockup(hostIp: String, proxyPort: Int) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = androidx.compose.ui.graphics.Color(0xFFF2F2F7),
+        border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFFD1D1D6)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("< Wi-Fi", fontSize = 12.sp, color = androidx.compose.ui.graphics.Color(0xFF007AFF), fontWeight = FontWeight.Medium)
+                Text("Configure Proxy", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = androidx.compose.ui.graphics.Color.Black)
+                Text("Save", fontSize = 12.sp, color = androidx.compose.ui.graphics.Color(0xFF007AFF), fontWeight = FontWeight.Bold)
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = androidx.compose.ui.graphics.Color(0xFFE5E5EA),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(2.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    Text("Off", fontSize = 11.sp, color = androidx.compose.ui.graphics.Color.Gray, modifier = Modifier.padding(vertical = 4.dp, horizontal = 12.dp))
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = androidx.compose.ui.graphics.Color.White,
+                        shadowElevation = 1.dp
+                    ) {
+                        Text("Manual ✓", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = androidx.compose.ui.graphics.Color.Black, modifier = Modifier.padding(vertical = 4.dp, horizontal = 16.dp))
+                    }
+                    Text("Auto", fontSize = 11.sp, color = androidx.compose.ui.graphics.Color.Gray, modifier = Modifier.padding(vertical = 4.dp, horizontal = 12.dp))
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = androidx.compose.ui.graphics.Color.White,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Server", fontSize = 12.sp, color = androidx.compose.ui.graphics.Color.Black)
+                        Text(hostIp, fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = androidx.compose.ui.graphics.Color(0xFF007AFF))
+                    }
+                    Divider(color = androidx.compose.ui.graphics.Color(0xFFE5E5EA), thickness = 0.5.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Port", fontSize = 12.sp, color = androidx.compose.ui.graphics.Color.Black)
+                        Text(proxyPort.toString(), fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = androidx.compose.ui.graphics.Color(0xFF007AFF))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun MacVisualMockup(hostIp: String, proxyPort: Int, pacPort: Int) {
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = androidx.compose.ui.graphics.Color(0xFF282828),
+        border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFF505050)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Box(modifier = Modifier.size(9.dp).background(androidx.compose.ui.graphics.Color(0xFFFF5F56), shape = androidx.compose.foundation.shape.CircleShape))
+                Spacer(modifier = Modifier.width(5.dp))
+                Box(modifier = Modifier.size(9.dp).background(androidx.compose.ui.graphics.Color(0xFFFFBD2E), shape = androidx.compose.foundation.shape.CircleShape))
+                Spacer(modifier = Modifier.width(5.dp))
+                Box(modifier = Modifier.size(9.dp).background(androidx.compose.ui.graphics.Color(0xFF27C93F), shape = androidx.compose.foundation.shape.CircleShape))
+                Spacer(modifier = Modifier.width(10.dp))
+                Text("Network > Wi-Fi > Proxies", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = androidx.compose.ui.graphics.Color.White)
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Surface(
+                shape = RoundedCornerShape(6.dp),
+                color = androidx.compose.ui.graphics.Color(0xFF1E1E1E),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    Text("Active Proxy Configurations:", fontSize = 10.sp, color = androidx.compose.ui.graphics.Color.Gray)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("[✓] Web Proxy (HTTP): $hostIp : $proxyPort", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = androidx.compose.ui.graphics.Color(0xFF6EE7B7))
+                    Text("[✓] Secure Web Proxy (HTTPS): $hostIp : $proxyPort", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = androidx.compose.ui.graphics.Color(0xFF6EE7B7))
+                    Text("[✓] Auto Proxy (PAC): http://$hostIp:$pacPort/wpad.dat", fontSize = 10.sp, color = androidx.compose.ui.graphics.Color(0xFF93C5FD))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AndroidVisualMockup(hostIp: String, proxyPort: Int) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = androidx.compose.ui.graphics.Color(0xFF1E293B),
+        border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFF38BDF8)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Wifi, contentDescription = null, tint = androidx.compose.ui.graphics.Color(0xFF38BDF8), modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Android Network Details > Proxy", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = androidx.compose.ui.graphics.Color.White)
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text("Proxy: Manual", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = androidx.compose.ui.graphics.Color(0xFFFBBF24))
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Surface(
+                shape = RoundedCornerShape(6.dp),
+                color = androidx.compose.ui.graphics.Color(0xFF0F172A),
+                border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFF475569)),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(6.dp)) {
+                    Text("Proxy hostname", fontSize = 9.sp, color = androidx.compose.ui.graphics.Color.Gray)
+                    Text(hostIp, fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = androidx.compose.ui.graphics.Color(0xFF38BDF8))
+                }
+            }
+
+            Surface(
+                shape = RoundedCornerShape(6.dp),
+                color = androidx.compose.ui.graphics.Color(0xFF0F172A),
+                border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFF475569)),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(6.dp)) {
+                    Text("Proxy port", fontSize = 9.sp, color = androidx.compose.ui.graphics.Color.Gray)
+                    Text(proxyPort.toString(), fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, color = androidx.compose.ui.graphics.Color(0xFF38BDF8))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun NetfetchCompanionVisualMockup(hostIp: String, socksPort: Int) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = androidx.compose.ui.graphics.Color(0xFF0F172A),
+        border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFF10B981)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                "Phone-to-Phone NetFetch Fast Connect",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = androidx.compose.ui.graphics.Color(0xFF34D399)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceAround,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.PhoneAndroid, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White, modifier = Modifier.size(24.dp))
+                    Text("Provider", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = androidx.compose.ui.graphics.Color.White)
+                    Text("Hotspot ON", fontSize = 9.sp, color = androidx.compose.ui.graphics.Color(0xFF34D399))
+                }
+
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("))) Wi-Fi Direct (((", fontSize = 10.sp, color = androidx.compose.ui.graphics.Color(0xFF6EE7B7), fontWeight = FontWeight.Bold)
+                    Text("Auto Encrypted TCP", fontSize = 9.sp, color = androidx.compose.ui.graphics.Color.LightGray)
+                }
+
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.PhoneAndroid, contentDescription = null, tint = androidx.compose.ui.graphics.Color.White, modifier = Modifier.size(24.dp))
+                    Text("Receiver", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = androidx.compose.ui.graphics.Color.White)
+                    Text("VPN Active ✓", fontSize = 9.sp, color = androidx.compose.ui.graphics.Color(0xFF34D399))
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Surface(
+                shape = RoundedCornerShape(6.dp),
+                color = androidx.compose.ui.graphics.Color(0xFF1E293B),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "No manual proxy configuration needed on receiver Android device!",
+                    fontSize = 10.sp,
+                    color = androidx.compose.ui.graphics.Color(0xFFA7F3D0),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(6.dp)
+                )
             }
         }
     }

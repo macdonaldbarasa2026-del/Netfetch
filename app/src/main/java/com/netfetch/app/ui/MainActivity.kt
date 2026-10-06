@@ -397,16 +397,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startHotspotService(config: HotspotConfig) {
-        if (config.mode == TetherMode.PRO) {
-            val vpnIntent = VpnService.prepare(this)
-
-            if (vpnIntent != null) {
-                pendingHotspotConfig = config
-                vpnPermissionLauncher.launch(vpnIntent)
-                return
-            }
-        }
-
         startHotspotServiceAfterVpnPermission(config)
     }
 

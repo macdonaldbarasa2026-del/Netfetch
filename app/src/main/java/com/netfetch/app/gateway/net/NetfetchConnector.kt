@@ -12,4 +12,9 @@ interface NetfetchConnector {
     ): Socket
 
     fun openUdp(): DatagramSocket
+
+    fun resolveDns(
+        destination: InetAddress,
+        queryData: ByteArray
+    ): ByteArray? = null
 }

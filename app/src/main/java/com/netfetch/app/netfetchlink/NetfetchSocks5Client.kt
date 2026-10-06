@@ -43,6 +43,9 @@ class NetfetchSocks5Client(
                 )
             }
 
+            socket.tcpNoDelay = true
+            socket.keepAlive = true
+
             socket.connect(
                 InetSocketAddress(
                     proxyHost,
@@ -57,12 +60,13 @@ class NetfetchSocks5Client(
             val output = socket.getOutputStream()
 
             /*
-             * SOCKS5 greeting.
+             * SOCKS5 greeting: offer both AUTH_NONE and AUTH_USERNAME_PASSWORD.
              */
             output.write(
                 byteArrayOf(
                     VERSION.toByte(),
-                    1,
+                    2,
+                    AUTH_NONE.toByte(),
                     AUTH_USERNAME_PASSWORD.toByte()
                 )
             )

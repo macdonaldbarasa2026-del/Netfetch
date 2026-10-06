@@ -211,6 +211,9 @@ class UpstreamNetworkManager(private val context: Context) {
             }
         }
 
+    @Volatile
+    private var defaultNetworkCallback: ConnectivityManager.NetworkCallback? = null
+
     fun start() {
         if (started) {
             Log.d(TAG, "Already started")
@@ -218,6 +221,28 @@ class UpstreamNetworkManager(private val context: Context) {
         }
 
         started = true
+
+        // 1. Immediately seed with active network if available
+        try {
+            val active = connectivityManager.activeNetwork
+            if (active != null) {
+                val caps = connectivityManager.getNetworkCapabilities(active)
+                if (caps != null && isCandidate(caps)) {
+                    val type = determineType(caps)
+                    availableNetworks[active] = type
+                    publishState(
+                        UpstreamState(
+                            network = active,
+                            type = type,
+                            hasInternet = true,
+                            displayName = displayNameFor(type)
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not check initial active network: ${e.message}")
+        }
 
         try {
             val request =
@@ -232,26 +257,43 @@ class UpstreamNetworkManager(private val context: Context) {
                 networkCallback
             )
 
+            // Register default network callback for Android 7.0+ (API 24+)
+            val defCb = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    if (!started) return
+                    val caps = connectivityManager.getNetworkCapabilities(network) ?: return
+                    if (isCandidate(caps)) {
+                        availableNetworks[network] = determineType(caps)
+                        requestReselect()
+                    }
+                }
+                override fun onLost(network: Network) {
+                    if (!started) return
+                    requestReselect()
+                }
+            }
+            defaultNetworkCallback = defCb
+            connectivityManager.registerDefaultNetworkCallback(defCb)
+
             Log.i(
                 TAG,
                 "UpstreamNetworkManager started"
             )
         } catch (e: Exception) {
-            started = false
-
             Log.e(
                 TAG,
                 "Failed to register network callback",
                 e
             )
 
-            publishState(
-                UpstreamState(
-                    displayName = "No Internet"
+            // Do not fail startup completely if we already found an active network
+            if (_upstreamState.value.network == null) {
+                publishState(
+                    UpstreamState(
+                        displayName = "No Internet"
+                    )
                 )
-            )
-
-            return
+            }
         }
 
         detectCurrentNetworks()
@@ -272,6 +314,13 @@ class UpstreamNetworkManager(private val context: Context) {
                 TAG,
                 "Error unregistering network callback: ${e.message}"
             )
+        }
+
+        defaultNetworkCallback?.let { cb ->
+            try {
+                connectivityManager.unregisterNetworkCallback(cb)
+            } catch (_: Exception) {}
+            defaultNetworkCallback = null
         }
 
         recoveryJob?.cancel()
@@ -306,27 +355,33 @@ class UpstreamNetworkManager(private val context: Context) {
             return
         }
 
-        val until =
-            System.currentTimeMillis() +
-                FAILURE_COOLDOWN_MS
+        val active = try { connectivityManager.activeNetwork } catch (_: Exception) { null }
+        val caps = connectivityManager.getNetworkCapabilities(network)
+        val isOnlyNetwork = availableNetworks.size <= 1
+        val isAndroidValidated = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
 
-        failedUntil[network] = until
-
-        Log.w(
-            TAG,
-            "Connectivity failure reported for $network; " +
-                "cooling down for ${FAILURE_COOLDOWN_MS}ms"
-        )
-
-        if (_upstreamState.value.network == network) {
-            publishState(
-                UpstreamState(
-                    displayName = "Recovering Internet..."
+        if (!isOnlyNetwork && network != active && !isAndroidValidated) {
+            failedUntil[network] = System.currentTimeMillis() + FAILURE_COOLDOWN_MS
+            Log.w(
+                TAG,
+                "Connectivity failure reported for $network; " +
+                    "cooling down for ${FAILURE_COOLDOWN_MS}ms"
+            )
+            if (_upstreamState.value.network == network) {
+                publishState(
+                    UpstreamState(
+                        displayName = "Recovering Internet..."
+                    )
                 )
+            }
+        } else {
+            Log.w(
+                TAG,
+                "Connectivity probe failed for $network, but retaining as candidate"
             )
         }
 
-        scheduleRecovery()
+        requestReselect()
     }
 
     /**
@@ -345,6 +400,17 @@ class UpstreamNetworkManager(private val context: Context) {
         val now = System.currentTimeMillis()
         val current =
             mutableMapOf<Network, UpstreamType>()
+
+        // Check active network first
+        try {
+            val active = connectivityManager.activeNetwork
+            if (active != null) {
+                val caps = connectivityManager.getNetworkCapabilities(active)
+                if (caps != null && isCandidate(caps)) {
+                    current[active] = determineType(caps)
+                }
+            }
+        } catch (_: Exception) {}
 
         for (network in connectivityManager.allNetworks) {
             val caps =
@@ -549,7 +615,7 @@ class UpstreamNetworkManager(private val context: Context) {
     private fun chooseBestCandidates(): List<Network> {
         val now = System.currentTimeMillis()
 
-        return availableNetworks
+        val valid = availableNetworks
             .entries
             .asSequence()
             .filter { entry ->
@@ -570,6 +636,17 @@ class UpstreamNetworkManager(private val context: Context) {
             )
             .map { it.key }
             .toList()
+
+        if (valid.isNotEmpty()) return valid
+
+        // Fallback: If all candidates are temporarily marked failed, do NOT drop internet completely.
+        val active = try { connectivityManager.activeNetwork } catch (_: Exception) { null }
+        if (active != null && availableNetworks.containsKey(active)) {
+            failedUntil.remove(active)
+            return listOf(active)
+        }
+
+        return availableNetworks.keys.toList()
     }
 
     private fun transportPriority(
@@ -602,7 +679,7 @@ class UpstreamNetworkManager(private val context: Context) {
             connectivityManager.getNetworkCapabilities(network)
                 ?: return false
 
-        if (!isCandidate(caps)) {
+        if (!isCandidate(caps, network)) {
             return false
         }
 
@@ -640,7 +717,8 @@ class UpstreamNetworkManager(private val context: Context) {
                 TAG,
                 "Upstream validation failed for $network: ${e.message}"
             )
-            false
+            val active = try { connectivityManager.activeNetwork } catch (_: Exception) { null }
+            active != null && active == network
         }
     }
 
@@ -651,20 +729,51 @@ class UpstreamNetworkManager(private val context: Context) {
             connectivityManager.getNetworkCapabilities(network)
                 ?: return false
 
-        return isCandidate(caps)
+        return isCandidate(caps, network)
     }
 
     private fun isCandidate(
-        caps: NetworkCapabilities
+        caps: NetworkCapabilities,
+        network: Network? = null
     ): Boolean {
-        return caps.hasCapability(
-            NetworkCapabilities.NET_CAPABILITY_INTERNET
-        )
+        if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+            return false
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_WIFI_P2P)) {
+                return false
+            }
+        }
+        if (network != null) {
+            try {
+                val lp = connectivityManager.getLinkProperties(network)
+                val iface = lp?.interfaceName?.lowercase() ?: ""
+                if (iface.startsWith("p2p") || iface.contains("p2p")) {
+                    return false
+                }
+                val hasGateway = lp?.linkAddresses?.any {
+                    it.address.hostAddress == "192.168.49.1"
+                } == true
+                if (hasGateway) {
+                    return false
+                }
+            } catch (_: Exception) {}
+        }
+        return true
     }
 
     private fun isCoolingDown(
         network: Network
     ): Boolean {
+        // Never cool down if this is the only network we have or if it's currently the system's active network
+        if (availableNetworks.size <= 1) {
+            return false
+        }
+        val active = try { connectivityManager.activeNetwork } catch (_: Exception) { null }
+        if (active != null && active == network) {
+            return false
+        }
+
         val until =
             failedUntil[network]
             ?: return false

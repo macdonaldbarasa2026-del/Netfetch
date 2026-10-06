@@ -166,7 +166,7 @@ class NetfetchReceiverVpnService : VpnService() {
                 NetfetchTunEngine(
                     tunInterface = tunInterface!!,
                     connector = connector,
-                    enableUdp = false
+                    enableUdp = true
                 )
 
             tunEngine = engine

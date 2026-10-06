@@ -112,6 +112,7 @@ class Socks5ProxyServer(
         trackClient(clientIp)
 
         try {
+            client.tcpNoDelay = true
             client.soTimeout = READ_TIMEOUT_MS
             val input = client.getInputStream()
             val output = client.getOutputStream()
@@ -129,29 +130,24 @@ class Socks5ProxyServer(
             val methods = ByteArray(nMethods)
             readFully(input, methods)
 
+            val isLocalHotspotClient = clientIp.startsWith("192.168.") ||
+                    clientIp.startsWith("10.") ||
+                    clientIp == "127.0.0.1"
+
+            val clientOffersNoAuth = methods.any { (it.toInt() and 0xFF) == AUTH_NO_AUTH }
+            val clientOffersUserPass = methods.any { (it.toInt() and 0xFF) == AUTH_USERNAME_PASSWORD }
+
             val authenticationRequired =
                 !username.isNullOrEmpty() && !password.isNullOrEmpty()
 
-            val selectedMethod =
-                if (authenticationRequired) {
-                    AUTH_USERNAME_PASSWORD
-                } else {
-                    AUTH_NO_AUTH
-                }
-
-            val methodSupported = when (selectedMethod) {
-                AUTH_NO_AUTH ->
-                    methods.any { (it.toInt() and 0xFF) == AUTH_NO_AUTH }
-
-                AUTH_USERNAME_PASSWORD ->
-                    methods.any {
-                        (it.toInt() and 0xFF) == AUTH_USERNAME_PASSWORD
-                    }
-
-                else -> false
+            val selectedMethod = when {
+                clientOffersNoAuth && (isLocalHotspotClient || !authenticationRequired) -> AUTH_NO_AUTH
+                clientOffersUserPass -> AUTH_USERNAME_PASSWORD
+                clientOffersNoAuth -> AUTH_NO_AUTH
+                else -> 0xFF
             }
 
-            if (!methodSupported) {
+            if (selectedMethod == 0xFF) {
                 output.write(
                     byteArrayOf(
                         SOCKS5_VERSION.toByte(),
@@ -316,34 +312,42 @@ class Socks5ProxyServer(
 
     private fun openUpstreamSocket(host: String, port: Int): Socket {
         val upstream = upstreamNetworkProvider()
-            ?: throw java.io.IOException(
-                "No validated upstream internet network is available"
-            )
+            ?: com.netfetch.app.network.NetfetchUpstreamRuntime.fallbackNetwork()
 
         /*
-         * Resolve DNS through the selected Android Network. This is critical
-         * when Wi-Fi Direct is the downstream interface and normal Wi-Fi or
-         * cellular is the upstream interface.
+         * Resolve DNS through the selected Android Network, falling back to system DNS.
          */
-        val addresses = upstream.getAllByName(host)
-
-        if (addresses.isEmpty()) {
-            throw java.net.UnknownHostException(
-                "No address found for $host"
-            )
-        }
+        val addresses = try {
+            upstream?.getAllByName(host)?.toList()?.takeIf { it.isNotEmpty() }
+        } catch (_: Exception) {
+            null
+        } ?: try {
+            java.net.InetAddress.getAllByName(host).toList().takeIf { it.isNotEmpty() }
+        } catch (_: Exception) {
+            null
+        } ?: throw java.net.UnknownHostException("No address found for $host")
 
         var lastError: Exception? = null
 
+        // Attempt 1: Try via selected upstream network
         for (address in addresses) {
             var socket: Socket? = null
 
             try {
-                socket = upstream.socketFactory.createSocket()
-
-                if (!com.netfetch.app.network.NetfetchUpstreamRuntime.protect(socket)) {
-                    throw java.io.IOException("Unable to protect upstream SOCKS socket")
+                socket = if (upstream != null) {
+                    try {
+                        upstream.socketFactory.createSocket()
+                    } catch (_: Exception) {
+                        Socket()
+                    }
+                } else {
+                    Socket()
                 }
+
+                socket.tcpNoDelay = true
+                socket.keepAlive = true
+
+                com.netfetch.app.network.NetfetchUpstreamRuntime.protect(socket)
 
                 socket.connect(
                     InetSocketAddress(address, port),
@@ -352,29 +356,45 @@ class Socks5ProxyServer(
 
                 Log.d(
                     TAG,
-                    "Connected through selected upstream network: " +
-                        "$host/$address:$port"
+                    "Connected through upstream: $host/$address:$port"
                 )
 
                 return socket
             } catch (e: Exception) {
                 lastError = e
-
-                try {
-                    socket?.close()
-                } catch (_: Exception) {
-                }
-
+                runCatching { socket?.close() }
                 Log.d(
                     TAG,
-                    "SOCKS upstream address failed " +
-                        "$address:$port: ${e.message}"
+                    "SOCKS upstream address failed $address:$port: ${e.message}"
                 )
             }
         }
 
+        // Attempt 2: If upstream socket failed, fall back to direct default routing
+        for (address in addresses) {
+            var directSocket: Socket? = null
+            try {
+                directSocket = Socket()
+                directSocket.tcpNoDelay = true
+                directSocket.keepAlive = true
+                com.netfetch.app.network.NetfetchUpstreamRuntime.protect(directSocket)
+                directSocket.connect(
+                    InetSocketAddress(address, port),
+                    CONNECT_TIMEOUT_MS
+                )
+                Log.d(
+                    TAG,
+                    "SOCKS connected via direct default routing fallback: $host/$address:$port"
+                )
+                return directSocket
+            } catch (e: Exception) {
+                lastError = e
+                runCatching { directSocket?.close() }
+            }
+        }
+
         throw java.io.IOException(
-            "Selected upstream network could not connect to $host:$port",
+            "Could not connect to $host:$port",
             lastError
         )
     }
@@ -392,6 +412,8 @@ class Socks5ProxyServer(
             // Established proxy tunnels must support long-lived connections.
             targetSocket.soTimeout = 0
             clientSocket.soTimeout = 0
+            targetSocket.tcpNoDelay = true
+            clientSocket.tcpNoDelay = true
 
             // Build success reply using the actual upstream address family.
             val localAddress = targetSocket.localAddress
@@ -491,6 +513,7 @@ class Socks5ProxyServer(
             var read: Int
             while (input.read(buffer).also { read = it } != -1) {
                 output.write(buffer, 0, read)
+                output.flush()
                 val amount = read.toLong()
 
                 if (isUpload) {

@@ -16,38 +16,34 @@ object ConnectivityTester {
 
     private const val TAG = "NetFetchConnTest"
 
-    private const val CONNECT_TIMEOUT_MS = 4_000
-    private const val READ_TIMEOUT_MS = 4_000
+    private const val CONNECT_TIMEOUT_MS = 5_000
+    private const val READ_TIMEOUT_MS = 5_000
 
     private val TEST_URLS = listOf(
+        "http://connectivitycheck.gstatic.com/generate_204",
         "https://connectivitycheck.gstatic.com/generate_204",
         "https://www.google.com/generate_204",
-        "https://cp.cloudflare.com/"
+        "https://cp.cloudflare.com/",
+        "http://www.msftconnecttest.com/connecttest.txt"
     )
 
     suspend fun testConnectivity(network: Network?): Boolean =
         withContext(Dispatchers.IO) {
             if (network == null) {
-                Log.w(TAG, "No upstream network supplied")
+                // If network is null, test system-level default connectivity
+                for (testUrl in TEST_URLS) {
+                    if (testHttpDirect(testUrl)) {
+                        Log.i(TAG, "Internet validated via default routing by $testUrl")
+                        return@withContext true
+                    }
+                }
                 return@withContext false
             }
 
-            /*
-             * Android's VALIDATED capability is useful evidence, but we still
-             * perform an actual request through the exact Network selected by
-             * NetFetch.
-             */
             for (testUrl in TEST_URLS) {
-                if (testUrl == TEST_URLS.first()) {
-                    if (testHttp(network, testUrl, require204 = true)) {
-                        Log.i(TAG, "Internet validated by $testUrl")
-                        return@withContext true
-                    }
-                } else {
-                    if (testHttp(network, testUrl, require204 = false)) {
-                        Log.i(TAG, "Internet validated by $testUrl")
-                        return@withContext true
-                    }
+                if (testHttp(network, testUrl)) {
+                    Log.i(TAG, "Internet validated on network $network by $testUrl")
+                    return@withContext true
                 }
             }
 
@@ -57,8 +53,7 @@ object ConnectivityTester {
 
     private fun testHttp(
         network: Network,
-        address: String,
-        require204: Boolean
+        address: String
     ): Boolean {
         var connection: HttpURLConnection? = null
 
@@ -70,23 +65,15 @@ object ConnectivityTester {
                 requestMethod = "GET"
                 connectTimeout = CONNECT_TIMEOUT_MS
                 readTimeout = READ_TIMEOUT_MS
-                instanceFollowRedirects = false
+                instanceFollowRedirects = true
                 useCaches = false
                 doInput = true
                 setRequestProperty("Connection", "close")
-                setRequestProperty("Cache-Control", "no-cache")
-                setRequestProperty("Pragma", "no-cache")
-                setRequestProperty("User-Agent", "NetFetch/1.0")
+                setRequestProperty("User-Agent", "Mozilla/5.0 NetFetch/1.0")
             }
 
             val response = connection.responseCode
-
-            val success =
-                if (require204) {
-                    response == HttpURLConnection.HTTP_NO_CONTENT
-                } else {
-                    response in 200..399
-                }
+            val success = response in 200..399 || response == HttpURLConnection.HTTP_NO_CONTENT
 
             Log.d(
                 TAG,
@@ -99,6 +86,29 @@ object ConnectivityTester {
                 TAG,
                 "Probe failed $address on $network: ${e.message}"
             )
+            false
+        } finally {
+            connection?.disconnect()
+        }
+    }
+
+    private fun testHttpDirect(address: String): Boolean {
+        var connection: HttpURLConnection? = null
+        return try {
+            connection = URL(address).openConnection() as HttpURLConnection
+            connection.apply {
+                requestMethod = "GET"
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = READ_TIMEOUT_MS
+                instanceFollowRedirects = true
+                useCaches = false
+                doInput = true
+                setRequestProperty("Connection", "close")
+                setRequestProperty("User-Agent", "Mozilla/5.0 NetFetch/1.0")
+            }
+            val response = connection.responseCode
+            response in 200..399 || response == HttpURLConnection.HTTP_NO_CONTENT
+        } catch (_: Exception) {
             false
         } finally {
             connection?.disconnect()

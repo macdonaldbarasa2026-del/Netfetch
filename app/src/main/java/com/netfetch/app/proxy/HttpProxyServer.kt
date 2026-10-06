@@ -57,7 +57,7 @@ class HttpProxyServer(
     companion object {
         private const val CONNECT_TIMEOUT_MS = 15000
         private const val READ_TIMEOUT_MS = 30000
-        private const val MAX_CONCURRENT_CLIENTS = 50
+        private const val MAX_CONCURRENT_CLIENTS = 256
     }
 
     fun start() {
@@ -105,6 +105,7 @@ class HttpProxyServer(
         val clientIp = clientSocket.inetAddress?.hostAddress ?: "Unknown"
 
         try {
+            clientSocket.tcpNoDelay = true
             if (!clientAuthorizer(clientIp)) {
                 clientSocket.getOutputStream().write(
                     "HTTP/1.1 407 Proxy Authentication Required\r\nConnection: close\r\n\r\n"
@@ -228,78 +229,91 @@ class HttpProxyServer(
 
     private fun openUpstreamSocket(host: String, port: Int): Socket {
         val upstream = upstreamNetworkProvider()
-            ?: throw java.io.IOException(
-                "No validated upstream internet network is available"
-            )
+            ?: com.netfetch.app.network.NetfetchUpstreamRuntime.fallbackNetwork()
 
-        return try {
-            /*
-             * IMPORTANT:
-             *
-             * Do not resolve the hostname with the phone's default network.
-             * Resolve it through the selected Android Network first.
-             *
-             * Otherwise NetFetch can select Wi-Fi correctly while DNS still
-             * goes through another network and the downstream connection fails.
-             */
-            val addresses = upstream.getAllByName(host)
+        /*
+         * Resolve hostname: try selected Android Network DNS first,
+         * then fall back to system DNS.
+         */
+        val addresses = try {
+            upstream?.getAllByName(host)?.toList()?.takeIf { it.isNotEmpty() }
+        } catch (_: Exception) {
+            null
+        } ?: try {
+            java.net.InetAddress.getAllByName(host).toList().takeIf { it.isNotEmpty() }
+        } catch (_: Exception) {
+            null
+        } ?: throw java.net.UnknownHostException("No address found for $host")
 
-            if (addresses.isEmpty()) {
-                throw java.net.UnknownHostException(
-                    "No address found for $host"
+        var lastError: Exception? = null
+
+        // Attempt 1: Try via selected upstream network
+        for (address in addresses) {
+            var socket: Socket? = null
+            try {
+                socket = if (upstream != null) {
+                    try {
+                        upstream.socketFactory.createSocket()
+                    } catch (_: Exception) {
+                        Socket()
+                    }
+                } else {
+                    Socket()
+                }
+
+                socket.tcpNoDelay = true
+                socket.keepAlive = true
+
+                com.netfetch.app.network.NetfetchUpstreamRuntime.protect(socket)
+
+                socket.connect(
+                    InetSocketAddress(address, port),
+                    CONNECT_TIMEOUT_MS
+                )
+
+                Log.d(
+                    TAG,
+                    "Connected through upstream: $host/$address:$port"
+                )
+
+                return socket
+            } catch (e: Exception) {
+                lastError = e
+                runCatching { socket?.close() }
+                Log.d(
+                    TAG,
+                    "Upstream address failed $address:$port: ${e.message}"
                 )
             }
-
-            var lastError: Exception? = null
-
-            for (address in addresses) {
-                try {
-                    val socket = upstream.socketFactory.createSocket()
-
-                    if (!com.netfetch.app.network.NetfetchUpstreamRuntime.protect(socket)) {
-                        throw java.io.IOException("Unable to protect upstream HTTP proxy socket")
-                    }
-
-                    socket.connect(
-                        InetSocketAddress(address, port),
-                        CONNECT_TIMEOUT_MS
-                    )
-
-                    Log.d(
-                        TAG,
-                        "Connected through selected upstream network: " +
-                            "$host/$address:$port"
-                    )
-
-                    return socket
-                } catch (e: Exception) {
-                    lastError = e
-                    Log.d(
-                        TAG,
-                        "Upstream address failed $address:$port: ${e.message}"
-                    )
-                }
-            }
-
-            throw java.io.IOException(
-                "Selected upstream network could not connect to $host:$port",
-                lastError
-            )
-        } catch (e: Exception) {
-            Log.w(
-                TAG,
-                "Selected upstream connection failed for $host:$port: ${e.message}"
-            )
-
-            if (e is java.io.IOException) {
-                throw e
-            }
-
-            throw java.io.IOException(
-                "Selected upstream network could not connect to $host:$port",
-                e
-            )
         }
+
+        // Attempt 2: If upstream-bound socket failed, fall back to direct default routing
+        for (address in addresses) {
+            var directSocket: Socket? = null
+            try {
+                directSocket = Socket()
+                directSocket.tcpNoDelay = true
+                directSocket.keepAlive = true
+                com.netfetch.app.network.NetfetchUpstreamRuntime.protect(directSocket)
+                directSocket.connect(
+                    InetSocketAddress(address, port),
+                    CONNECT_TIMEOUT_MS
+                )
+                Log.d(
+                    TAG,
+                    "Connected via direct default routing fallback: $host/$address:$port"
+                )
+                return directSocket
+            } catch (e: Exception) {
+                lastError = e
+                runCatching { directSocket?.close() }
+            }
+        }
+
+        throw java.io.IOException(
+            "Could not connect to $host:$port",
+            lastError
+        )
     }
 
     private suspend fun tunnelHttps(
@@ -316,6 +330,8 @@ class HttpProxyServer(
             // Established CONNECT tunnels must support long-lived connections.
             targetSocket.soTimeout = 0
             clientSocket.soTimeout = 0
+            targetSocket.tcpNoDelay = true
+            clientSocket.tcpNoDelay = true
 
             val okResponse = "HTTP/1.1 200 Connection Established\r\nProxy-Agent: NetFetch/1.0\r\n\r\n"
             clientOut.write(okResponse.toByteArray(Charsets.ISO_8859_1))
@@ -416,6 +432,8 @@ class HttpProxyServer(
             // Established HTTP proxy tunnels must support long-lived connections.
             targetSocket.soTimeout = 0
             clientSocket.soTimeout = 0
+            targetSocket.tcpNoDelay = true
+            clientSocket.tcpNoDelay = true
 
             val targetOut = targetSocket.getOutputStream()
             val targetIn = targetSocket.getInputStream()
@@ -435,14 +453,26 @@ class HttpProxyServer(
             targetOut.write(rewrittenFirstLine.toByteArray(Charsets.ISO_8859_1))
             recordBytes(clientIp, rewrittenFirstLine.length.toLong(), isUpload = true)
 
+            var connectionHeaderWritten = false
             for (i in 1 until headerLines.size) {
                 val lineStr = headerLines[i]
-                if (!lineStr.startsWith("Proxy-Connection", ignoreCase = true) &&
-                    !lineStr.startsWith("Proxy-Authorization", ignoreCase = true)) {
+                if (lineStr.startsWith("Connection:", ignoreCase = true)) {
+                    val lineBytes = "Connection: close\r\n".toByteArray(Charsets.ISO_8859_1)
+                    targetOut.write(lineBytes)
+                    recordBytes(clientIp, lineBytes.size.toLong(), isUpload = true)
+                    connectionHeaderWritten = true
+                } else if (!lineStr.startsWith("Proxy-Connection", ignoreCase = true) &&
+                    !lineStr.startsWith("Proxy-Authorization", ignoreCase = true) &&
+                    !lineStr.startsWith("Keep-Alive", ignoreCase = true)) {
                     val lineBytes = (lineStr + "\r\n").toByteArray(Charsets.ISO_8859_1)
                     targetOut.write(lineBytes)
                     recordBytes(clientIp, lineBytes.size.toLong(), isUpload = true)
                 }
+            }
+            if (!connectionHeaderWritten) {
+                val closeHeader = "Connection: close\r\n".toByteArray(Charsets.ISO_8859_1)
+                targetOut.write(closeHeader)
+                recordBytes(clientIp, closeHeader.size.toLong(), isUpload = true)
             }
             targetOut.write("\r\n".toByteArray(Charsets.ISO_8859_1))
             targetOut.flush()
@@ -488,6 +518,7 @@ class HttpProxyServer(
             var read: Int
             while (input.read(buffer).also { read = it } != -1) {
                 output.write(buffer, 0, read)
+                output.flush()
                 recordBytes(clientIp, read.toLong(), isUpload)
             }
         } catch (_: Exception) {

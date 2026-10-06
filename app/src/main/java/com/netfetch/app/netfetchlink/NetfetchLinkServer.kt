@@ -42,7 +42,7 @@ class NetfetchLinkServer(
         private const val TAG = "NetFetchLinkServer"
         const val PORT = 8290
         private const val TOKEN_BYTES = 32
-        private const val TOKEN_TTL_MS = 60_000L
+        private const val TOKEN_TTL_MS = 300_000L
 
         /** Maximum simultaneously active link-handshake threads. */
         private const val HANDLER_THREADS = 8

@@ -53,4 +53,80 @@ class NetfetchReceiverConnector(
             "Receiver UDP forwarding is unavailable: provider SOCKS5 UDP ASSOCIATE is not supported"
         )
     }
+
+    private val dnsCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, ByteArray>>()
+
+    override fun resolveDns(
+        destination: InetAddress,
+        queryData: ByteArray
+    ): ByteArray? {
+        if (queryData.size < 12) return null
+
+        val cacheKey = if (queryData.size > 2) {
+            queryData.copyOfRange(2, queryData.size).contentToString()
+        } else ""
+
+        if (cacheKey.isNotEmpty()) {
+            val cached = dnsCache[cacheKey]
+            if (cached != null && System.currentTimeMillis() < cached.first) {
+                val resp = cached.second.copyOf()
+                resp[0] = queryData[0]
+                resp[1] = queryData[1]
+                return resp
+            }
+        }
+
+        val targetDns = destination.hostAddress ?: "1.1.1.1"
+        val response = queryDnsOverTcp(targetDns, queryData)
+            ?: queryDnsOverTcp("1.1.1.1", queryData)
+            ?: queryDnsOverTcp("8.8.8.8", queryData)
+
+        if (response != null && cacheKey.isNotEmpty()) {
+            dnsCache[cacheKey] = Pair(System.currentTimeMillis() + 60_000L, response)
+        }
+
+        return response
+    }
+
+    private fun queryDnsOverTcp(dnsServerIp: String, queryData: ByteArray): ByteArray? {
+        var socket: Socket? = null
+        return try {
+            socket = socksClient.connect(
+                proxyHost = providerHost,
+                proxyPort = providerPort,
+                username = username,
+                password = password,
+                destinationHost = dnsServerIp,
+                destinationPort = 53
+            )
+            socket.soTimeout = 4000
+            val out = socket.getOutputStream()
+            out.write((queryData.size shr 8) and 0xFF)
+            out.write(queryData.size and 0xFF)
+            out.write(queryData)
+            out.flush()
+
+            val inStream = socket.getInputStream()
+            val lenHigh = inStream.read()
+            val lenLow = inStream.read()
+            if (lenHigh < 0 || lenLow < 0) {
+                return null
+            }
+            val respLen = (lenHigh shl 8) or lenLow
+            if (respLen <= 0 || respLen > 4096) return null
+
+            val resp = ByteArray(respLen)
+            var offset = 0
+            while (offset < respLen) {
+                val count = inStream.read(resp, offset, respLen - offset)
+                if (count < 0) break
+                offset += count
+            }
+            if (offset == respLen) resp else null
+        } catch (_: Exception) {
+            null
+        } finally {
+            runCatching { socket?.close() }
+        }
+    }
 }
