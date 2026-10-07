@@ -13,3 +13,8 @@ captures/
 *.ap_
 *.dex
 app-debug-apk/
+
+# Local environment files
+.env
+.env.*
+!.env.example
