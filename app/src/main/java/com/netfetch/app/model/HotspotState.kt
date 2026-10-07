@@ -11,6 +11,8 @@ sealed class HotspotState {
         val downloadSpeedBps: Long = 0L,
         val uploadSpeedBps: Long = 0L,
         val totalBytesTransferred: Long = 0L,
+        val totalBytesUploaded: Long = 0L,
+        val totalBytesDownloaded: Long = 0L,
         val upstreamState: UpstreamNetworkManager.UpstreamState = UpstreamNetworkManager.UpstreamState(),
         val internetVerified: Boolean = false,
         val gatewayAddress: String = "192.168.49.1"

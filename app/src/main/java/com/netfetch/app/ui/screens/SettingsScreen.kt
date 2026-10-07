@@ -322,6 +322,29 @@ fun SettingsScreen(
                         )
                     }
                 }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = AmberWarning.copy(alpha = 0.1f),
+                    border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.4f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Info, contentDescription = null, tint = AmberWarning, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("5 GHz Compatibility Note", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextDark)
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "5 GHz provides the fastest throughput, but requires hardware support on both this device and connecting clients. If client devices fail to discover or connect to the 5 GHz hotspot, NetFetch automatically falls back to Auto/2.4 GHz, or switch directly to Auto.",
+                            fontSize = 11.sp,
+                            color = TextMuted
+                        )
+                    }
+                }
             }
         }
 

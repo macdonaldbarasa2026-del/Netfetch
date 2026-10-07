@@ -188,17 +188,11 @@ class MainActivity : ComponentActivity() {
 
                     when (receiverState) {
                         is NetfetchReceiverState.Connected -> {
-                            if (receiverState.providerMode ==
-                                com.netfetch.app.netfetchlink.NetfetchLinkProtocol.MODE_PRO
-                            ) {
-                                // Pro mode: receiver needs VPN to tunnel all traffic
-                                // through the provider's SOCKS5 server.
+                            if (receiverState.socksPort > 0) {
+                                // SOCKS5 is available on the provider: tunnel device traffic via VPN
                                 requestReceiverVpn(receiverState)
                             } else {
-                                // Normal mode: no VPN needed. The UI shows the
-                                // provider's HTTP proxy / PAC details and the user
-                                // or OS configures the system proxy accordingly.
-                                // Stop any previously running receiver VPN.
+                                // Fallback: HTTP / PAC proxy mode
                                 stopReceiverVpn()
                             }
                         }

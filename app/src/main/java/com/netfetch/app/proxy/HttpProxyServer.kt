@@ -30,7 +30,7 @@ class HttpProxyServer(
     private val upstreamNetworkProvider: () -> Network? = { null },
     private val clientAuthorizer: (String) -> Boolean = { true },
     private val onClientActivity: (Map<String, ClientDevice>) -> Unit,
-    private val onBandwidthUpdate: (uploadSpeed: Long, downloadSpeed: Long, totalBytes: Long) -> Unit
+    private val onBandwidthUpdate: (uploadSpeed: Long, downloadSpeed: Long, totalUploaded: Long, totalDownloaded: Long) -> Unit
 ) {
     private val TAG = "NetFetchProxy"
     private var serverSocket: ServerSocket? = null
@@ -616,7 +616,7 @@ class HttpProxyServer(
                     }
                 }
 
-                onBandwidthUpdate(upSpeed, downSpeed, currUp + currDown)
+                onBandwidthUpdate(upSpeed, downSpeed, currUp, currDown)
                 notifyClientsChanged()
             }
         }

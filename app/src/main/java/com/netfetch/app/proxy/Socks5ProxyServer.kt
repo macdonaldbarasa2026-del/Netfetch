@@ -33,7 +33,7 @@ class Socks5ProxyServer(
     private val sessionValidator: ((String, String) -> Boolean)? = null,
     private val upstreamNetworkProvider: () -> Network? = { null },
     private val onClientActivity: (Map<String, ClientDevice>) -> Unit,
-    private val onBandwidthUpdate: (uploadSpeed: Long, downloadSpeed: Long, totalBytes: Long) -> Unit
+    private val onBandwidthUpdate: (uploadSpeed: Long, downloadSpeed: Long, totalUploaded: Long, totalDownloaded: Long) -> Unit
 ) {
     private val TAG = "NetFetchSocks5"
     private var serverSocket: ServerSocket? = null
@@ -573,7 +573,7 @@ class Socks5ProxyServer(
                     }
                 }
 
-                onBandwidthUpdate(upSpeed, downSpeed, currUp + currDown)
+                onBandwidthUpdate(upSpeed, downSpeed, currUp, currDown)
                 onClientActivity(HashMap(connectedClientsMap))
             }
         }

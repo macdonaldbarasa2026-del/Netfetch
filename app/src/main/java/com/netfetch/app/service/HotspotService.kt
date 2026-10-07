@@ -88,11 +88,45 @@ class HotspotService : Service() {
      * device through different identities. The registry reconciles them.
      */
     private val clientRegistry = NetfetchClientRegistry()
+
+    private var httpUpSpeed = 0L
+    private var httpDownSpeed = 0L
+    private var httpTotalUp = 0L
+    private var httpTotalDown = 0L
+
+    private var socksUpSpeed = 0L
+    private var socksDownSpeed = 0L
+    private var socksTotalUp = 0L
+    private var socksTotalDown = 0L
+
     private var currentUpSpeed = 0L
     private var currentDownSpeed = 0L
+    private var currentTotalUp = 0L
+    private var currentTotalDown = 0L
+    private var currentTotalTransferred = 0L
+
     private var currentGateway = "192.168.49.1"
     private var currentUpstreamState = UpstreamNetworkManager.UpstreamState()
     private var internetVerified = false
+
+    private fun recalculateBandwidth() {
+        currentUpSpeed = httpUpSpeed + socksUpSpeed
+        currentDownSpeed = httpDownSpeed + socksDownSpeed
+        currentTotalUp = httpTotalUp + socksTotalUp
+        currentTotalDown = httpTotalDown + socksTotalDown
+        currentTotalTransferred = currentTotalUp + currentTotalDown
+        updateActiveState()
+        updateNotification()
+    }
+
+    private fun formatBytes(bytes: Long): String {
+        return when {
+            bytes < 1024 -> "$bytes B"
+            bytes < 1024 * 1024 -> String.format("%.1f KB", bytes / 1024.0)
+            bytes < 1024 * 1024 * 1024 -> String.format("%.2f MB", bytes / (1024.0 * 1024.0))
+            else -> String.format("%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0))
+        }
+    }
 
     private var internetMonitorJob: Job? = null
     private var upstreamMonitorJob: Job? = null
@@ -188,11 +222,12 @@ class HotspotService : Service() {
 
                 updateActiveState()
             },
-            onBandwidthUpdate = { upSpeed, downSpeed, _ ->
-                currentUpSpeed = upSpeed
-                currentDownSpeed = downSpeed
-                updateActiveState()
-                updateNotification()
+            onBandwidthUpdate = { upSpeed, downSpeed, totalUp, totalDown ->
+                httpUpSpeed = upSpeed
+                httpDownSpeed = downSpeed
+                httpTotalUp = totalUp
+                httpTotalDown = totalDown
+                recalculateBandwidth()
             }
         ).also { it.start() }
 
@@ -233,7 +268,13 @@ class HotspotService : Service() {
 
                 updateActiveState()
             },
-            onBandwidthUpdate = { _, _, _ -> }
+            onBandwidthUpdate = { upSpeed, downSpeed, totalUp, totalDown ->
+                socksUpSpeed = upSpeed
+                socksDownSpeed = downSpeed
+                socksTotalUp = totalUp
+                socksTotalDown = totalDown
+                recalculateBandwidth()
+            }
         ).also { it.start() }
 
         // 5. Start PAC server (initially with default gateway; updated after Wi-Fi Direct starts)
@@ -354,8 +395,19 @@ class HotspotService : Service() {
 
         clientRegistry.clear()
         activeClients = emptyList()
+        httpUpSpeed = 0L
+        httpDownSpeed = 0L
+        httpTotalUp = 0L
+        httpTotalDown = 0L
+        socksUpSpeed = 0L
+        socksDownSpeed = 0L
+        socksTotalUp = 0L
+        socksTotalDown = 0L
         currentUpSpeed = 0L
         currentDownSpeed = 0L
+        currentTotalUp = 0L
+        currentTotalDown = 0L
+        currentTotalTransferred = 0L
         internetVerified = false
         currentGateway = "192.168.49.1"
         currentUpstreamState = UpstreamNetworkManager.UpstreamState()
@@ -415,8 +467,19 @@ class HotspotService : Service() {
         upstreamNetworkManager = null
 
         activeClients = emptyList()
+        httpUpSpeed = 0L
+        httpDownSpeed = 0L
+        httpTotalUp = 0L
+        httpTotalDown = 0L
+        socksUpSpeed = 0L
+        socksDownSpeed = 0L
+        socksTotalUp = 0L
+        socksTotalDown = 0L
         currentUpSpeed = 0L
         currentDownSpeed = 0L
+        currentTotalUp = 0L
+        currentTotalDown = 0L
+        currentTotalTransferred = 0L
         internetVerified = false
         currentGateway = "192.168.49.1"
 
@@ -445,6 +508,9 @@ class HotspotService : Service() {
             connectedClients = activeClients,
             downloadSpeedBps = currentDownSpeed,
             uploadSpeedBps = currentUpSpeed,
+            totalBytesTransferred = currentTotalTransferred,
+            totalBytesUploaded = currentTotalUp,
+            totalBytesDownloaded = currentTotalDown,
             upstreamState = currentUpstreamState,
             internetVerified = internetVerified,
             gatewayAddress = currentGateway
@@ -480,8 +546,9 @@ class HotspotService : Service() {
             val count = activeClients.size
             val downSpeedKb = currentDownSpeed / 1024
             val upSpeedKb = currentUpSpeed / 1024
+            val sharedFormatted = formatBytes(currentTotalTransferred)
             val internetStr = if (internetVerified) "✓ Internet" else "No Internet"
-            "[$modeStr | $internetStr] Clients: $count | ↓${downSpeedKb}KB/s ↑${upSpeedKb}KB/s"
+            "[$modeStr | $internetStr] Shared: $sharedFormatted | Clients: $count | ↓${downSpeedKb}KB/s ↑${upSpeedKb}KB/s"
         }
         val notification = buildNotification("NetFetch Active (${currentConfig.ssid})", text)
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager

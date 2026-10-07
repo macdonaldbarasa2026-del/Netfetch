@@ -176,6 +176,35 @@ fun DevicesScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        if (connectedClients.isNotEmpty()) {
+            val totalUp = connectedClients.sumOf { it.bytesUploaded }
+            val totalDown = connectedClients.sumOf { it.bytesDownloaded }
+            val totalSum = totalUp + totalDown
+
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardWhite),
+                border = BorderStroke(1.dp, PrimaryBlack),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Active Devices Shared Total", fontSize = 11.sp, color = TextMuted)
+                        Text(formatBytes(totalSum), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = PrimaryBlack)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Text("↑ Out: ${formatBytes(totalUp)}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = PrimaryBlack)
+                        Text("↓ In: ${formatBytes(totalDown)}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = GreenSuccess)
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
         if (connectedClients.isEmpty()) {
             Box(
                 modifier = Modifier

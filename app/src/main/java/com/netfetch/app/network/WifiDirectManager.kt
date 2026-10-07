@@ -101,45 +101,72 @@ class WifiDirectManager(
     private fun createNewGroup(config: HotspotConfig) {
         activePassphrase = config.passphrase
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val p2pConfigBuilder = WifiP2pConfig.Builder()
-                .setNetworkName(config.ssid)
-                .setPassphrase(config.passphrase)
+        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+        val is5GhzSupported = wifiManager?.is5GHzBandSupported == true
 
-            when (config.bandPreference) {
-                BandPreference.BAND_2GHZ -> p2pConfigBuilder.setGroupOperatingBand(WifiP2pConfig.GROUP_OWNER_BAND_2GHZ)
-                BandPreference.BAND_5GHZ -> p2pConfigBuilder.setGroupOperatingBand(WifiP2pConfig.GROUP_OWNER_BAND_5GHZ)
-                BandPreference.AUTO -> p2pConfigBuilder.setGroupOperatingBand(WifiP2pConfig.GROUP_OWNER_BAND_AUTO)
-            }
-
-            try {
-                wifiP2pManager?.createGroup(channel ?: return, p2pConfigBuilder.build(), object : WifiP2pManager.ActionListener {
-                    override fun onSuccess() {
-                        Log.i(TAG, "Wi-Fi Direct group created successfully via Builder API")
-                        fetchGroupDetails()
-                    }
-
-                    override fun onFailure(reason: Int) {
-                        Log.w(TAG, "Custom group creation failed ($reason), falling back to standard createGroup")
-                        fallbackCreateGroup(config)
-                    }
-                })
-                return
-            } catch (e: Exception) {
-                Log.e(TAG, "Error using WifiP2pConfig Builder: ${e.message}")
-            }
+        var effectiveBand = config.bandPreference
+        if (effectiveBand == BandPreference.BAND_5GHZ && !is5GhzSupported) {
+            Log.w(TAG, "5 GHz band requested but not supported by device Wi-Fi hardware. Falling back to AUTO.")
+            effectiveBand = BandPreference.AUTO
         }
 
-        fallbackCreateGroup(config)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            createGroupWithBuilder(config, effectiveBand)
+            return
+        }
+
+        fallbackCreateGroup(config, effectiveBand)
     }
 
     @SuppressLint("MissingPermission")
-    private fun fallbackCreateGroup(config: HotspotConfig) {
-        tryApplyBandReflection(config.bandPreference)
+    private fun createGroupWithBuilder(config: HotspotConfig, band: BandPreference) {
+        val p2pConfigBuilder = WifiP2pConfig.Builder()
+            .setNetworkName(config.ssid)
+            .setPassphrase(config.passphrase)
+
+        when (band) {
+            BandPreference.BAND_2GHZ -> p2pConfigBuilder.setGroupOperatingBand(WifiP2pConfig.GROUP_OWNER_BAND_2GHZ)
+            BandPreference.BAND_5GHZ -> p2pConfigBuilder.setGroupOperatingBand(WifiP2pConfig.GROUP_OWNER_BAND_5GHZ)
+            BandPreference.AUTO -> p2pConfigBuilder.setGroupOperatingBand(WifiP2pConfig.GROUP_OWNER_BAND_AUTO)
+        }
+
+        try {
+            wifiP2pManager?.createGroup(channel ?: return, p2pConfigBuilder.build(), object : WifiP2pManager.ActionListener {
+                override fun onSuccess() {
+                    Log.i(TAG, "Wi-Fi Direct group created successfully via Builder API (band=$band)")
+                    fetchGroupDetails()
+                }
+
+                override fun onFailure(reason: Int) {
+                    Log.w(TAG, "Group creation failed for band $band (reason=$reason)")
+                    if (band == BandPreference.BAND_5GHZ) {
+                        Log.i(TAG, "Retrying group creation with AUTO band...")
+                        createGroupWithBuilder(config, BandPreference.AUTO)
+                    } else if (band == BandPreference.AUTO) {
+                        Log.i(TAG, "Retrying group creation with 2.4 GHz band...")
+                        createGroupWithBuilder(config, BandPreference.BAND_2GHZ)
+                    } else {
+                        Log.w(TAG, "All builder band attempts failed, falling back to standard createGroup")
+                        fallbackCreateGroup(config, BandPreference.AUTO)
+                    }
+                }
+            })
+            return
+        } catch (e: Exception) {
+            Log.e(TAG, "Error using WifiP2pConfig Builder: ${e.message}")
+            fallbackCreateGroup(config, BandPreference.AUTO)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun fallbackCreateGroup(config: HotspotConfig, band: BandPreference = BandPreference.AUTO) {
+        if (band == BandPreference.BAND_2GHZ) {
+            tryApplyBandReflection(band)
+        }
 
         wifiP2pManager?.createGroup(channel, object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
-                Log.i(TAG, "Wi-Fi Direct group created successfully")
+                Log.i(TAG, "Wi-Fi Direct group created successfully via standard fallback")
                 fetchGroupDetails()
             }
 

@@ -154,15 +154,6 @@ class NetfetchReceiverLink(
                         return@NetfetchReceiverDiscovery
                     }
 
-                    if (provider.mode != requestedMode()) {
-                        onStateChanged(
-                            NetfetchReceiverState.Unsupported(
-                                "This provider uses ${provider.mode.lowercase()} mode. Switch modes to connect."
-                            )
-                        )
-                        return@NetfetchReceiverDiscovery
-                    }
-
                     connecting = true
 
                     onStateChanged(
@@ -293,10 +284,6 @@ class NetfetchReceiverLink(
                     val session =
                         NetfetchLinkClient()
                             .openSession(providerHost = providerAddress)
-
-                    if (session.mode != provider.mode || session.mode != requestedMode()) {
-                        throw IllegalStateException("Provider mode changed or is incompatible")
-                    }
 
                     if (stopped) return@Thread
 

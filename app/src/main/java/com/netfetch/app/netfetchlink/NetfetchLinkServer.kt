@@ -42,7 +42,7 @@ class NetfetchLinkServer(
         private const val TAG = "NetFetchLinkServer"
         const val PORT = 8290
         private const val TOKEN_BYTES = 32
-        private const val TOKEN_TTL_MS = 300_000L
+        private const val TOKEN_TTL_MS = 86_400_000L // 24 hours
 
         /** Maximum simultaneously active link-handshake threads. */
         private const val HANDLER_THREADS = 8
@@ -164,12 +164,7 @@ class NetfetchLinkServer(
                 writer.println("MODE $mode")
                 writer.println("HTTP_PORT $httpPort")
                 writer.println("PAC_PORT $pacPort")
-
-                // Only send SOCKS_PORT in Pro mode.
-                if (mode == NetfetchLinkProtocol.MODE_PRO) {
-                    writer.println("SOCKS_PORT $socksPort")
-                }
-
+                writer.println("SOCKS_PORT $socksPort")
                 writer.println("END")
             } catch (e: Exception) {
                 Log.w(TAG, "Link client handler failed", e)

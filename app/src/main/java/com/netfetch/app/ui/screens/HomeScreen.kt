@@ -262,6 +262,109 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // ── Real-Time Net Total Shared Sum Card ──
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardWhite),
+                border = BorderStroke(1.dp, PrimaryBlack),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.DataUsage,
+                                contentDescription = null,
+                                tint = PrimaryBlack,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "NET SHARED IN TOTAL",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = PrimaryBlack
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = GreenSuccess.copy(alpha = 0.15f)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .background(GreenSuccess, shape = androidx.compose.foundation.shape.CircleShape)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "REAL TIME",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = GreenSuccess
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Text(
+                        text = formatBytes(activeState.totalBytesTransferred),
+                        fontSize = 30.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = PrimaryBlack
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.ArrowUpward,
+                                contentDescription = null,
+                                tint = PrimaryBlack,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Going Out: ${formatBytes(activeState.totalBytesUploaded)}",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextDark
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.ArrowDownward,
+                                contentDescription = null,
+                                tint = GreenSuccess,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Inbound: ${formatBytes(activeState.totalBytesDownloaded)}",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TextDark
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             // Speed / Devices Card
             Card(
                 colors = CardDefaults.cardColors(containerColor = CardWhite),
@@ -664,5 +767,14 @@ fun CredentialItem(label: String, value: String, context: Context) {
         ) {
             Icon(Icons.Default.ContentCopy, contentDescription = "Copy", tint = PrimaryBlack, modifier = Modifier.size(16.dp))
         }
+    }
+}
+
+private fun formatBytes(bytes: Long): String {
+    return when {
+        bytes < 1024 -> "$bytes B"
+        bytes < 1024 * 1024 -> String.format(java.util.Locale.US, "%.1f KB", bytes / 1024.0)
+        bytes < 1024 * 1024 * 1024 -> String.format(java.util.Locale.US, "%.2f MB", bytes / (1024.0 * 1024.0))
+        else -> String.format(java.util.Locale.US, "%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0))
     }
 }

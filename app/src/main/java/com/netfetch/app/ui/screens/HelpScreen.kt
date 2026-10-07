@@ -457,6 +457,13 @@ fun HelpScreen(config: HotspotConfig) {
                             "nearby Wi-Fi permissions."
                 )
 
+                FaqItem(
+                    question = "5 GHz fails to connect or network is invisible on older devices",
+                    answer = "5 GHz Wi-Fi Direct requires both host and client devices to support 5 GHz Wi-Fi Direct. " +
+                            "If client devices cannot see the network or fail to connect, NetFetch automatically falls back to Auto/2.4 GHz. " +
+                            "You can also change Band Preference to 'Auto' or '2.4 GHz' in Settings for maximum compatibility."
+                )
+
                 if (isPro) {
                     FaqItem(
                         question = "Does Pro require root?",
