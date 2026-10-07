@@ -189,6 +189,11 @@ class NetfetchLinkServer(
         return token
     }
 
+    private fun normalizeIp(ip: String?): String {
+        if (ip.isNullOrBlank()) return ""
+        return ip.removePrefix("::ffff:").substringBefore("%").trim()
+    }
+
     fun validateSession(token: String, clientAddress: String? = null): Boolean {
         val session = sessions[token]
             ?: return false
@@ -203,8 +208,12 @@ class NetfetchLinkServer(
         // A link token is issued after the Wi-Fi Direct peer has connected.
         // Binding it to that peer prevents a token observed on the local link
         // from being replayed by a different downstream device.
-        if (clientAddress != null && clientAddress != session.clientAddress) {
-            return false
+        if (clientAddress != null) {
+            val normClient = normalizeIp(clientAddress)
+            val normSession = normalizeIp(session.clientAddress)
+            if (normClient.isNotEmpty() && normSession.isNotEmpty() && normClient != normSession) {
+                return false
+            }
         }
 
         // Sliding expiry: active receivers keep their session alive.
@@ -215,10 +224,11 @@ class NetfetchLinkServer(
 
     /** Authorizes Normal HTTP/PAC traffic after a successful link handshake. */
     fun isClientAuthorized(clientAddress: String): Boolean {
-        if (clientAddress.isBlank()) return false
+        val normClient = normalizeIp(clientAddress)
+        if (normClient.isBlank()) return false
         val now = System.currentTimeMillis()
         return sessions.values.any { session ->
-            session.clientAddress == clientAddress && now <= session.expiresAt
+            normalizeIp(session.clientAddress) == normClient && now <= session.expiresAt
         }
     }
 

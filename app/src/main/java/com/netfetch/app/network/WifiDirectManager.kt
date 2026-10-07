@@ -103,11 +103,20 @@ class WifiDirectManager(
 
         val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
         val is5GhzSupported = wifiManager?.is5GHzBandSupported == true
+        @Suppress("DEPRECATION")
+        val upstreamFreq = wifiManager?.connectionInfo?.frequency ?: 0
+        val isUpstreamOn24Ghz = upstreamFreq in 2400..2500
 
         var effectiveBand = config.bandPreference
         if (effectiveBand == BandPreference.BAND_5GHZ && !is5GhzSupported) {
-            Log.w(TAG, "5 GHz band requested but not supported by device Wi-Fi hardware. Falling back to AUTO.")
+            Log.w(TAG, "5 GHz band requested but not supported by device hardware. Falling back to AUTO.")
             effectiveBand = BandPreference.AUTO
+        } else if (effectiveBand == BandPreference.BAND_5GHZ && isUpstreamOn24Ghz) {
+            Log.w(
+                TAG,
+                "Device upstream Wi-Fi is on 2.4 GHz ($upstreamFreq MHz). " +
+                    "Single-chip concurrency may reject 5 GHz Direct. Attempting 5 GHz with fallback."
+            )
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -120,8 +129,15 @@ class WifiDirectManager(
 
     @SuppressLint("MissingPermission")
     private fun createGroupWithBuilder(config: HotspotConfig, band: BandPreference) {
+        // Android 10+ requires SSID to start with DIRECT-
+        val safeSsid = if (config.ssid.startsWith("DIRECT-")) {
+            config.ssid
+        } else {
+            "DIRECT-${config.ssid}"
+        }
+
         val p2pConfigBuilder = WifiP2pConfig.Builder()
-            .setNetworkName(config.ssid)
+            .setNetworkName(safeSsid)
             .setPassphrase(config.passphrase)
 
         when (band) {
@@ -139,28 +155,32 @@ class WifiDirectManager(
 
                 override fun onFailure(reason: Int) {
                     Log.w(TAG, "Group creation failed for band $band (reason=$reason)")
-                    if (band == BandPreference.BAND_5GHZ) {
-                        Log.i(TAG, "Retrying group creation with AUTO band...")
-                        createGroupWithBuilder(config, BandPreference.AUTO)
-                    } else if (band == BandPreference.AUTO) {
-                        Log.i(TAG, "Retrying group creation with 2.4 GHz band...")
-                        createGroupWithBuilder(config, BandPreference.BAND_2GHZ)
-                    } else {
-                        Log.w(TAG, "All builder band attempts failed, falling back to standard createGroup")
-                        fallbackCreateGroup(config, BandPreference.AUTO)
+                    when (band) {
+                        BandPreference.BAND_5GHZ -> {
+                            Log.i(TAG, "5 GHz band failed ($reason). Retrying group creation with AUTO band...")
+                            createGroupWithBuilder(config, BandPreference.AUTO)
+                        }
+                        BandPreference.AUTO -> {
+                            Log.i(TAG, "AUTO band failed ($reason). Retrying group creation with 2.4 GHz band...")
+                            createGroupWithBuilder(config, BandPreference.BAND_2GHZ)
+                        }
+                        else -> {
+                            Log.w(TAG, "All builder band attempts failed, falling back to standard createGroup")
+                            fallbackCreateGroup(config, BandPreference.BAND_2GHZ)
+                        }
                     }
                 }
             })
             return
         } catch (e: Exception) {
             Log.e(TAG, "Error using WifiP2pConfig Builder: ${e.message}")
-            fallbackCreateGroup(config, BandPreference.AUTO)
+            fallbackCreateGroup(config, BandPreference.BAND_2GHZ)
         }
     }
 
     @SuppressLint("MissingPermission")
     private fun fallbackCreateGroup(config: HotspotConfig, band: BandPreference = BandPreference.AUTO) {
-        if (band == BandPreference.BAND_2GHZ) {
+        if (band == BandPreference.BAND_2GHZ || band == BandPreference.BAND_5GHZ) {
             tryApplyBandReflection(band)
         }
 

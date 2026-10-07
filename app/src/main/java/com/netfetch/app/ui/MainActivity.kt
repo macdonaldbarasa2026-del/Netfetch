@@ -167,6 +167,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val requestReceiverPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.entries.all { it.value }
+        if (allGranted) {
+            checkVpnAndStartReceiver()
+        } else {
+            android.widget.Toast.makeText(
+                this,
+                "Wi-Fi & Nearby device permissions are required to scan for NetFetch providers.",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -316,6 +331,15 @@ class MainActivity : ComponentActivity() {
                                     // cannot remain active under the new label.
                                     stopReceiverConnection()
                                     config = config.copy(mode = mode)
+                                    configStateFlow.value = config
+                                    saveConfig(config)
+                                    if (mode == TetherMode.PRO) {
+                                        val vpnIntent = VpnService.prepare(this@MainActivity)
+                                        if (vpnIntent != null) {
+                                            pendingHotspotConfig = config
+                                            vpnPermissionLauncher.launch(vpnIntent)
+                                        }
+                                    }
                                     if (state is HotspotState.Active) {
                                         startHotspotService(config)
                                     }
@@ -327,7 +351,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 },
                                 receiverState = receiverStateFlow.value,
-                                onStartReceiver = { startReceiverDiscovery() },
+                                onStartReceiver = { checkPermissionsAndStartReceiver() },
                                 onStopReceiver = { stopReceiverConnection() },
                                 onNavigateToDevices = { navController.navigate("devices") }
                             )
@@ -337,8 +361,16 @@ class MainActivity : ComponentActivity() {
                             DevicesScreen(connectedClients = clients, config = config)
                         }
                         composable("settings") {
+                            val isVpnGranted = VpnService.prepare(this@MainActivity) == null
                             SettingsScreen(
                                 config = config,
+                                isVpnGranted = isVpnGranted,
+                                onRequestVpnPermission = {
+                                    val vpnIntent = VpnService.prepare(this@MainActivity)
+                                    if (vpnIntent != null) {
+                                        vpnPermissionLauncher.launch(vpnIntent)
+                                    }
+                                },
                                 onUpdateConfig = { newConfig ->
                                     config = newConfig
                                     configStateFlow.value = newConfig
@@ -361,11 +393,12 @@ class MainActivity : ComponentActivity() {
 
     private fun checkPermissionsAndToggle() {
         val requiredPermissions = mutableListOf<String>()
-        requiredPermissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             requiredPermissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
             requiredPermissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            requiredPermissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
 
         val missing = requiredPermissions.filter {
@@ -391,6 +424,14 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startHotspotService(config: HotspotConfig) {
+        if (config.mode == TetherMode.PRO) {
+            val vpnIntent = VpnService.prepare(this)
+            if (vpnIntent != null) {
+                pendingHotspotConfig = config
+                vpnPermissionLauncher.launch(vpnIntent)
+                return
+            }
+        }
         startHotspotServiceAfterVpnPermission(config)
     }
 
@@ -412,6 +453,38 @@ class MainActivity : ComponentActivity() {
         } else {
             startService(intent)
         }
+    }
+
+    private fun checkPermissionsAndStartReceiver() {
+        val requiredPermissions = mutableListOf<String>()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            requiredPermissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+            requiredPermissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            requiredPermissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+
+        val missing = requiredPermissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (missing.isNotEmpty()) {
+            requestReceiverPermissionLauncher.launch(missing.toTypedArray())
+        } else {
+            checkVpnAndStartReceiver()
+        }
+    }
+
+    private fun checkVpnAndStartReceiver() {
+        if (configStateFlow.value.mode == TetherMode.PRO) {
+            val vpnIntent = VpnService.prepare(this)
+            if (vpnIntent != null) {
+                receiverVpnPermissionLauncher.launch(vpnIntent)
+                return
+            }
+        }
+        startReceiverDiscovery()
     }
 
     private fun startReceiverDiscovery() {

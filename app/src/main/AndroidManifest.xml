@@ -10,12 +10,17 @@
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
 
     <!-- Location & Nearby Devices permissions for Wi-Fi Direct P2P -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Location only needed for Wi-Fi Direct scanning on Android 12 and below -->
+    <uses-permission
+        android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.ACCESS_COARSE_LOCATION"
+        android:maxSdkVersion="32" />
     <uses-permission
         android:name="android.permission.NEARBY_WIFI_DEVICES"
         android:usesPermissionFlags="neverForLocation"
-        tools:targetApi="s" />
+        tools:targetApi="tiramisu" />
 
     <!-- Foreground Service & Notifications -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

@@ -46,11 +46,17 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --no-daemon --stacktrace --info
+      - name: Build Debug APK and Release AAB Bundle
+        run: ./gradlew assembleDebug bundleRelease --no-daemon --stacktrace
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: app-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload Play Store Release Bundle (AAB)
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-bundle
+          path: app/build/outputs/bundle/release/app-release.aab

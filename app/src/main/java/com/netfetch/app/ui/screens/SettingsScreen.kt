@@ -30,6 +30,8 @@ import com.netfetch.app.ui.theme.*
 @Composable
 fun SettingsScreen(
     config: HotspotConfig,
+    isVpnGranted: Boolean = false,
+    onRequestVpnPermission: () -> Unit = {},
     onUpdateConfig: (HotspotConfig) -> Unit
 ) {
     val context = LocalContext.current
@@ -75,10 +77,6 @@ fun SettingsScreen(
         mutableStateOf(config.maxConnectedClients.toFloat())
     }
 
-    var udpForwarding by remember(config.udpForwarding) {
-        mutableStateOf(config.udpForwarding)
-    }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -108,25 +106,84 @@ fun SettingsScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text("Pro transport", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextDark)
+                Text("Network Routing Engine", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextDark)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "NetFetch utilizes rootless userspace proxy and VPN tunneling. All HTTP/HTTPS browsing, streaming, messaging, and TCP application traffic route seamlessly without root access.",
+                    fontSize = 12.sp,
+                    color = TextMuted
+                )
+                Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Switch(
-                        checked = udpForwarding,
-                        onCheckedChange = { enabled ->
-                            udpForwarding = enabled
-                            onUpdateConfig(config.copy(udpForwarding = enabled))
-                        },
-                        enabled = config.mode == TetherMode.PRO
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = GreenSuccess, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("TCP & HTTP/HTTPS Tunneling: Enabled", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextDark)
+                }
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = GreenSuccess, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("DNS over TCP (1.1.1.1 / 8.8.8.8): Enabled", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextDark)
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // ── VPN Permission & Policy Card ──
+        Card(
+            colors = CardDefaults.cardColors(containerColor = CardWhite),
+            border = BorderStroke(1.dp, if (isVpnGranted) GreenSuccess.copy(alpha = 0.5f) else AmberWarning),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "VPN Routing Permission",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = TextDark
                     )
-                    Spacer(Modifier.width(12.dp))
-                    Column {
-                        Text("UDP forwarding", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isVpnGranted) GreenSuccess.copy(alpha = 0.15f) else AmberWarning.copy(alpha = 0.15f)
+                    ) {
                         Text(
-                            if (NetfetchLinkProtocol.UDP_TRANSPORT_AVAILABLE) "Available when negotiated with the provider."
-                            else "UDP unavailable on this connection. The preference is retained but TCP-only routing remains active.",
-                            fontSize = 12.sp,
-                            color = TextMuted
+                            text = if (isVpnGranted) "GRANTED ✓" else "ACTION REQUIRED",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isVpnGranted) GreenSuccess else AmberWarning,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Text(
+                    text = "Pro Mode uses Android's local VpnService to route device traffic through SOCKS5 without requiring root. Compliant with Google Play policies: no browsing data is logged or sent off your device.",
+                    fontSize = 12.sp,
+                    color = TextMuted
+                )
+
+                if (!isVpnGranted) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = onRequestVpnPermission,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = PrimaryBlack,
+                            contentColor = CardWhite
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Grant VPN Permission for Pro Mode")
                     }
                 }
             }

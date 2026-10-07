@@ -1,0 +1,9 @@
+{
+  "name": "NetFetch - Wi-Fi Direct Hotspot & Tethering",
+  "description": "No-root Wi-Fi Direct repeater, local HTTP & SOCKS5 proxy server, and high-performance device-to-device network sharing app for Android.",
+  "version": "1.0.0",
+  "requestFrame": true,
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
