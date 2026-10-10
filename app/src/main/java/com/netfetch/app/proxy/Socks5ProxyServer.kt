@@ -46,7 +46,7 @@ class Socks5ProxyServer(
     private val totalUploadCounter = AtomicLong(0L)
     private val totalDownloadCounter = AtomicLong(0L)
     private var speedMonitorJob: Job? = null
-    private val clientSemaphore = kotlinx.coroutines.sync.Semaphore(50)
+    private val clientSemaphore = kotlinx.coroutines.sync.Semaphore(512)
 
     companion object {
         private const val SOCKS5_VERSION = 5
@@ -113,6 +113,8 @@ class Socks5ProxyServer(
 
         try {
             client.tcpNoDelay = true
+            client.sendBufferSize = 128 * 1024
+            client.receiveBufferSize = 128 * 1024
             client.soTimeout = READ_TIMEOUT_MS
             val input = client.getInputStream()
             val output = client.getOutputStream()
@@ -315,17 +317,21 @@ class Socks5ProxyServer(
             ?: com.netfetch.app.network.NetfetchUpstreamRuntime.fallbackNetwork()
 
         /*
-         * Resolve DNS through the selected Android Network, falling back to system DNS.
+         * Resolve DNS through NetFetch high-performance DNS cache & engine
          */
         val addresses = try {
-            upstream?.getAllByName(host)?.toList()?.takeIf { it.isNotEmpty() }
+            com.netfetch.app.network.NetfetchDnsEngine.resolve(host, upstream)
         } catch (_: Exception) {
-            null
-        } ?: try {
-            java.net.InetAddress.getAllByName(host).toList().takeIf { it.isNotEmpty() }
-        } catch (_: Exception) {
-            null
-        } ?: throw java.net.UnknownHostException("No address found for $host")
+            try {
+                upstream?.getAllByName(host)?.toList()?.takeIf { it.isNotEmpty() }
+            } catch (_: Exception) {
+                null
+            } ?: try {
+                java.net.InetAddress.getAllByName(host).toList().takeIf { it.isNotEmpty() }
+            } catch (_: Exception) {
+                null
+            } ?: throw java.net.UnknownHostException("No address found for $host")
+        }
 
         var lastError: Exception? = null
 
@@ -346,6 +352,8 @@ class Socks5ProxyServer(
 
                 socket.tcpNoDelay = true
                 socket.keepAlive = true
+                socket.sendBufferSize = 128 * 1024
+                socket.receiveBufferSize = 128 * 1024
 
                 com.netfetch.app.network.NetfetchUpstreamRuntime.protect(socket)
 
@@ -377,6 +385,8 @@ class Socks5ProxyServer(
                 directSocket = Socket()
                 directSocket.tcpNoDelay = true
                 directSocket.keepAlive = true
+                directSocket.sendBufferSize = 128 * 1024
+                directSocket.receiveBufferSize = 128 * 1024
                 com.netfetch.app.network.NetfetchUpstreamRuntime.protect(directSocket)
                 directSocket.connect(
                     InetSocketAddress(address, port),

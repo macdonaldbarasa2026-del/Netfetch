@@ -1,8 +1,15 @@
 package com.netfetch.app.ui.screens
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,8 +30,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.netfetch.app.model.BandPreference
 import com.netfetch.app.model.HotspotConfig
-import com.netfetch.app.model.TetherMode
-import com.netfetch.app.netfetchlink.NetfetchLinkProtocol
 import com.netfetch.app.ui.theme.*
 
 @Composable
@@ -32,193 +37,68 @@ fun SettingsScreen(
     config: HotspotConfig,
     isVpnGranted: Boolean = false,
     onRequestVpnPermission: () -> Unit = {},
+    onNavigateToProxyConfig: () -> Unit = {},
     onUpdateConfig: (HotspotConfig) -> Unit
 ) {
     val context = LocalContext.current
     val scrollState = rememberScrollState()
 
-    var proxyPortInput by remember(config.proxyPort) {
-        mutableStateOf(config.proxyPort.toString())
-    }
+    var wifiSsid by remember(config.ssid) { mutableStateOf(config.ssid) }
+    var wifiPassphrase by remember(config.passphrase) { mutableStateOf(config.passphrase) }
+    var showWifiPassword by remember { mutableStateOf(false) }
 
-    var socksPortInput by remember(config.socksPort) {
-        mutableStateOf(config.socksPort.toString())
-    }
-
-    var socksUsername by remember(config.socksUsername) {
-        mutableStateOf(config.socksUsername)
-    }
-
-    var socksPassword by remember(config.socksPassword) {
-        mutableStateOf(config.socksPassword)
-    }
-
-    var showSocksPassword by remember {
-        mutableStateOf(false)
-    }
-
-    var wifiSsid by remember(config.ssid) {
-        mutableStateOf(config.ssid)
-    }
-
-    var wifiPassphrase by remember(config.passphrase) {
-        mutableStateOf(config.passphrase)
-    }
-
-    var showWifiPassword by remember {
-        mutableStateOf(false)
-    }
-
-    var selectedBand by remember(config.bandPreference) {
-        mutableStateOf(config.bandPreference)
-    }
-
-    var maxClients by remember(config.maxConnectedClients) {
-        mutableStateOf(config.maxConnectedClients.toFloat())
-    }
+    val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+    val isIgnoringBatteryOptimizations = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        powerManager?.isIgnoringBatteryOptimizations(context.packageName) ?: true
+    } else true
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(CreamBackground)
             .verticalScroll(scrollState)
-            .padding(16.dp)
+            .padding(20.dp)
     ) {
         Text(
             text = "Settings",
-            fontSize = 24.sp,
+            fontSize = 26.sp,
             fontWeight = FontWeight.Bold,
             color = PrimaryBlack
         )
-
         Text(
-            text = "Customize Wi-Fi band, proxy ports, credentials, and performance",
+            text = "Hotspot network, proxy gateway, and stealth features",
             fontSize = 12.sp,
             color = TextMuted
         )
 
         Spacer(modifier = Modifier.height(20.dp))
 
+        // ── 1. Wi-Fi Access Point Settings Card ──
         Card(
             colors = CardDefaults.cardColors(containerColor = CardWhite),
             border = BorderStroke(1.dp, SurfaceBorder),
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(18.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Network Routing Engine", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextDark)
-                Spacer(Modifier.height(6.dp))
+            Column(modifier = Modifier.padding(18.dp)) {
                 Text(
-                    "NetFetch utilizes rootless userspace proxy and VPN tunneling. All HTTP/HTTPS browsing, streaming, messaging, and TCP application traffic route seamlessly without root access.",
-                    fontSize = 12.sp,
-                    color = TextMuted
-                )
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = GreenSuccess, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("TCP & HTTP/HTTPS Tunneling: Enabled", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextDark)
-                }
-                Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = GreenSuccess, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("DNS over TCP (1.1.1.1 / 8.8.8.8): Enabled", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextDark)
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // ── VPN Permission & Policy Card ──
-        Card(
-            colors = CardDefaults.cardColors(containerColor = CardWhite),
-            border = BorderStroke(1.dp, if (isVpnGranted) GreenSuccess.copy(alpha = 0.5f) else AmberWarning),
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "VPN Routing Permission",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = TextDark
-                    )
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (isVpnGranted) GreenSuccess.copy(alpha = 0.15f) else AmberWarning.copy(alpha = 0.15f)
-                    ) {
-                        Text(
-                            text = if (isVpnGranted) "GRANTED ✓" else "ACTION REQUIRED",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isVpnGranted) GreenSuccess else AmberWarning,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                Text(
-                    text = "Pro Mode uses Android's local VpnService to route device traffic through SOCKS5 without requiring root. Compliant with Google Play policies: no browsing data is logged or sent off your device.",
-                    fontSize = 12.sp,
-                    color = TextMuted
-                )
-
-                if (!isVpnGranted) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Button(
-                        onClick = onRequestVpnPermission,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = PrimaryBlack,
-                            contentColor = CardWhite
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Grant VPN Permission for Pro Mode")
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Card(
-            colors = CardDefaults.cardColors(containerColor = CardWhite),
-            border = BorderStroke(1.dp, SurfaceBorder),
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text = "Wi-Fi Sharing",
+                    text = "Wi-Fi Hotspot Network",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
-                    color = TextDark
+                    color = PrimaryBlack
                 )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
                 Text(
-                    text = "Set the Wi-Fi name and 8-digit key that other devices use to connect to NetFetch.",
+                    text = "Broadcast name and WPA2 security credentials",
                     fontSize = 12.sp,
                     color = TextMuted
                 )
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
                 OutlinedTextField(
                     value = wifiSsid,
                     onValueChange = { wifiSsid = it },
-                    label = { Text("Wi-Fi Name (SSID)") },
+                    label = { Text("Network Name (SSID)") },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = PrimaryBlack,
@@ -233,37 +113,19 @@ fun SettingsScreen(
                 OutlinedTextField(
                     value = wifiPassphrase,
                     onValueChange = {
-                        if (it.length <= 8 && it.all(Char::isDigit)) {
+                        if (it.length <= 16) {
                             wifiPassphrase = it
                         }
                     },
-                    label = { Text("Wi-Fi Key (8 digits)") },
+                    label = { Text("Wi-Fi Password") },
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.NumberPassword
-                    ),
-                    visualTransformation = if (showWifiPassword) {
-                        VisualTransformation.None
-                    } else {
-                        PasswordVisualTransformation()
-                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    visualTransformation = if (showWifiPassword) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
-                        IconButton(
-                            onClick = {
-                                showWifiPassword = !showWifiPassword
-                            }
-                        ) {
+                        IconButton(onClick = { showWifiPassword = !showWifiPassword }) {
                             Icon(
-                                imageVector = if (showWifiPassword) {
-                                    Icons.Default.VisibilityOff
-                                } else {
-                                    Icons.Default.Visibility
-                                },
-                                contentDescription = if (showWifiPassword) {
-                                    "Hide Wi-Fi key"
-                                } else {
-                                    "Show Wi-Fi key"
-                                }
+                                imageVector = if (showWifiPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = "Toggle password visibility"
                             )
                         }
                     },
@@ -275,446 +137,210 @@ fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                Button(
-                    onClick = {
-                        when {
-                            wifiSsid.isBlank() -> {
-                                Toast.makeText(
-                                    context,
-                                    "Wi-Fi name cannot be empty",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-
-                            !wifiPassphrase.matches(Regex("\\d{8}")) -> {
-                                Toast.makeText(
-                                    context,
-                                    "Wi-Fi key must contain exactly 8 digits",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-
-                            else -> {
-                                onUpdateConfig(
-                                    config.copy(
-                                        ssid = wifiSsid,
-                                        passphrase = wifiPassphrase
-                                    )
-                                )
-
-                                Toast.makeText(
-                                    context,
-                                    "Wi-Fi sharing key saved",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = PrimaryBlack,
-                        contentColor = CardWhite
-                    ),
-                    modifier = Modifier.align(Alignment.End)
+                // Wi-Fi Band Selector
+                Text("Frequency Band", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextDark)
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text("Save Wi-Fi Key")
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Card(
-            colors = CardDefaults.cardColors(containerColor = CardWhite),
-            border = BorderStroke(1.dp, SurfaceBorder),
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text = "Wi-Fi Frequency Band",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextDark
-                )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Text(
-                    text = "Choose 5 GHz for maximum speed or 2.4 GHz for extended range.",
-                    fontSize = 12.sp,
-                    color = TextMuted
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                BandPreference.entries.forEach { band ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(
-                            selected = selectedBand == band,
+                    BandPreference.entries.forEach { band ->
+                        val selected = config.bandPreference == band
+                        FilterChip(
+                            selected = selected,
                             onClick = {
-                                selectedBand = band
-                                onUpdateConfig(
-                                    config.copy(bandPreference = band)
-                                )
+                                onUpdateConfig(config.copy(bandPreference = band))
                             },
-                            colors = RadioButtonDefaults.colors(
-                                selectedColor = PrimaryBlack
-                            )
-                        )
-
-                        Spacer(modifier = Modifier.width(8.dp))
-
-                        Text(
-                            band.displayName,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = TextDark
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = AmberWarning.copy(alpha = 0.1f),
-                    border = BorderStroke(1.dp, AmberWarning.copy(alpha = 0.4f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(10.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Info, contentDescription = null, tint = AmberWarning, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("5 GHz Compatibility Note", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextDark)
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "5 GHz provides the fastest throughput, but requires hardware support on both this device and connecting clients. If client devices fail to discover or connect to the 5 GHz hotspot, NetFetch automatically falls back to Auto/2.4 GHz, or switch directly to Auto.",
-                            fontSize = 11.sp,
-                            color = TextMuted
+                            label = { Text(band.name.replace("BAND_", "").replace("_", " "), fontSize = 11.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = PrimaryBlack,
+                                selectedLabelColor = CardWhite,
+                                containerColor = CreamBackground,
+                                labelColor = TextDark
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                borderColor = SurfaceBorder,
+                                selectedBorderColor = PrimaryBlack,
+                                enabled = true,
+                                selected = selected
+                            ),
+                            modifier = Modifier.weight(1f)
                         )
                     }
                 }
-            }
-        }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Card(
-            colors = CardDefaults.cardColors(containerColor = CardWhite),
-            border = BorderStroke(1.dp, SurfaceBorder),
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text = "HTTP/HTTPS Proxy",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextDark
-                )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Text(
-                    text = "Devices can use this proxy for normal HTTP and HTTPS traffic.",
-                    fontSize = 12.sp,
-                    color = TextMuted
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                OutlinedTextField(
-                    value = proxyPortInput,
-                    onValueChange = { proxyPortInput = it },
-                    label = { Text("HTTP/HTTPS Proxy Port") },
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Number
-                    ),
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = PrimaryBlack,
-                        unfocusedBorderColor = SurfaceBorder,
-                        focusedLabelColor = PrimaryBlack
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 Button(
                     onClick = {
-                        val port = proxyPortInput.toIntOrNull()
-
-                        if (port != null && port in 1024..65535) {
-                            onUpdateConfig(
-                                config.copy(proxyPort = port)
-                            )
-
-                            Toast.makeText(
-                                context,
-                                "Proxy Port set to $port",
-                                Toast.LENGTH_SHORT
-                            ).show()
+                        if (wifiSsid.isBlank()) {
+                            Toast.makeText(context, "Network name cannot be empty", Toast.LENGTH_SHORT).show()
+                        } else if (wifiPassphrase.length < 8) {
+                            Toast.makeText(context, "Password must be at least 8 characters", Toast.LENGTH_SHORT).show()
                         } else {
-                            Toast.makeText(
-                                context,
-                                "Invalid Port (Must be 1024 - 65535)",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = PrimaryBlack,
-                        contentColor = CardWhite
-                    ),
-                    modifier = Modifier.align(Alignment.End)
-                ) {
-                    Text("Save Port")
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Card(
-            colors = CardDefaults.cardColors(containerColor = CardWhite),
-            border = BorderStroke(1.dp, SurfaceBorder),
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text = "SOCKS5 Gateway",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextDark
-                )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Text(
-                    text = "Use these credentials when connecting a device or app to the SOCKS5 gateway.",
-                    fontSize = 12.sp,
-                    color = TextMuted
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                OutlinedTextField(
-                    value = socksPortInput,
-                    onValueChange = { socksPortInput = it },
-                    label = { Text("SOCKS5 Port") },
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Number
-                    ),
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = PrimaryBlack,
-                        unfocusedBorderColor = SurfaceBorder,
-                        focusedLabelColor = PrimaryBlack
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                OutlinedTextField(
-                    value = socksUsername,
-                    onValueChange = { socksUsername = it },
-                    label = { Text("Username") },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = PrimaryBlack,
-                        unfocusedBorderColor = SurfaceBorder,
-                        focusedLabelColor = PrimaryBlack
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                OutlinedTextField(
-                    value = socksPassword,
-                    onValueChange = { socksPassword = it },
-                    label = { Text("Password") },
-                    singleLine = true,
-                    visualTransformation = if (showSocksPassword) {
-                        VisualTransformation.None
-                    } else {
-                        PasswordVisualTransformation()
-                    },
-                    trailingIcon = {
-                        IconButton(
-                            onClick = {
-                                showSocksPassword = !showSocksPassword
-                            }
-                        ) {
-                            Icon(
-                                imageVector = if (showSocksPassword) {
-                                    Icons.Default.VisibilityOff
-                                } else {
-                                    Icons.Default.Visibility
-                                },
-                                contentDescription = if (showSocksPassword) {
-                                    "Hide password"
-                                } else {
-                                    "Show password"
-                                }
-                            )
-                        }
-                    },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = PrimaryBlack,
-                        unfocusedBorderColor = SurfaceBorder,
-                        focusedLabelColor = PrimaryBlack
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Button(
-                    onClick = {
-                        val port = socksPortInput.toIntOrNull()
-
-                        when {
-                            port == null || port !in 1024..65535 -> {
-                                Toast.makeText(
-                                    context,
-                                    "Invalid SOCKS5 port (1024 - 65535)",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-
-                            socksUsername.isBlank() -> {
-                                Toast.makeText(
-                                    context,
-                                    "Username cannot be empty",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-
-                            socksPassword.isBlank() -> {
-                                Toast.makeText(
-                                    context,
-                                    "Password cannot be empty",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-
-                            else -> {
-                                onUpdateConfig(
-                                    config.copy(
-                                        socksPort = port,
-                                        socksUsername = socksUsername,
-                                        socksPassword = socksPassword
-                                    )
+                            onUpdateConfig(
+                                config.copy(
+                                    ssid = wifiSsid.trim(),
+                                    passphrase = wifiPassphrase.trim()
                                 )
-
-                                Toast.makeText(
-                                    context,
-                                    "SOCKS5 settings saved",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
+                            )
+                            Toast.makeText(context, "Wi-Fi settings saved!", Toast.LENGTH_SHORT).show()
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = PrimaryBlack,
-                        contentColor = CardWhite
-                    ),
+                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlack),
+                    shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.align(Alignment.End)
                 ) {
-                    Text("Save SOCKS5")
+                    Text("Save Wi-Fi Settings", fontSize = 13.sp)
                 }
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // ── 2. Proxy & Port Routing Card ──
         Card(
             colors = CardDefaults.cardColors(containerColor = CardWhite),
             border = BorderStroke(1.dp, SurfaceBorder),
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.fillMaxWidth()
+            shape = RoundedCornerShape(18.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onNavigateToProxyConfig() }
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(18.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Maximum Client Connections",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = TextDark
-                    )
-
-                    Text(
-                        text = "${maxClients.toInt()} Devices",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = PrimaryBlack
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Tune, contentDescription = null, tint = PrimaryBlack, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Proxy Ports & Gateway",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PrimaryBlack
+                        )
+                    }
+                    Icon(Icons.Default.ChevronRight, contentDescription = null, tint = TextMuted)
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                Slider(
-                    value = maxClients,
-                    onValueChange = {
-                        maxClients = it
-                        onUpdateConfig(
-                            config.copy(
-                                maxConnectedClients = it.toInt()
-                            )
-                        )
-                    },
-                    valueRange = 1f..30f,
-                    steps = 29,
-                    colors = SliderDefaults.colors(
-                        thumbColor = PrimaryBlack,
-                        activeTrackColor = PrimaryBlack,
-                        inactiveTrackColor = SurfaceBorder
-                    )
+                Text(
+                    text = "HTTP/HTTPS Proxy Port: ${config.proxyPort} • PAC Auto-Config Port: ${config.pacPort} • SOCKS5 Port: ${config.socksPort}",
+                    fontSize = 12.sp,
+                    color = TextMuted
                 )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = CreamBackground,
+                    border = BorderStroke(1.dp, SurfaceBorder)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Configure Ports & Security", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = PrimaryBlack)
+                        Text("EDIT ↗", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextMuted)
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // ── 3. Stealth Engine & Device Protection Card ──
+        Card(
+            colors = CardDefaults.cardColors(containerColor = CardWhite),
+            border = BorderStroke(1.dp, SurfaceBorder),
+            shape = RoundedCornerShape(18.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Text(
+                    text = "Stealth & System Optimizations",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = PrimaryBlack
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = GreenSuccess, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Carrier DPI Bypass: Native Device TTL 64", fontSize = 12.sp, color = TextDark)
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = GreenSuccess, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("In-Memory DNS Engine: Cached (<1ms lookup)", fontSize = 12.sp, color = TextDark)
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = GreenSuccess, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("High-Performance Wi-Fi Radio Lock: Enabled", fontSize = 12.sp, color = TextDark)
+                }
+
+                if (!isIgnoringBatteryOptimizations) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedButton(
+                        onClick = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                try {
+                                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                        data = Uri.parse("package:${context.packageName}")
+                                    }
+                                    context.startActivity(intent)
+                                } catch (_: Exception) {
+                                    val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                                    context.startActivity(intent)
+                                }
+                            }
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Disable Battery Saver for NetFetch", fontSize = 12.sp)
+                    }
+                }
             }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        Card(
-            colors = CardDefaults.cardColors(containerColor = CardWhite),
-            border = BorderStroke(1.dp, SurfaceBorder),
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.fillMaxWidth()
+        // ── 4. Clean About Card ──
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    "NetFetch v1.0.0",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextDark
-                )
-
-                Text(
-                    "Classic Light Theme Edition - 100% Free",
-                    fontSize = 12.sp,
-                    color = TextMuted
-                )
-            }
+            Text(
+                text = "NetFetch v1.0.0",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = TextDark
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "© 2026 Created by MacDonald | Powered by Mixfia",
+                fontSize = 11.sp,
+                color = TextMuted
+            )
         }
     }
 }

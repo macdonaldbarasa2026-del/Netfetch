@@ -43,6 +43,7 @@ import com.netfetch.app.netfetchlink.NetfetchReceiverState
 import com.netfetch.app.ui.screens.DevicesScreen
 import com.netfetch.app.ui.screens.HelpScreen
 import com.netfetch.app.ui.screens.HomeScreen
+import com.netfetch.app.ui.screens.ProxyConfigScreen
 import com.netfetch.app.ui.screens.SettingsScreen
 import com.netfetch.app.ui.theme.CreamBackground
 import com.netfetch.app.ui.theme.NetFetchTheme
@@ -69,6 +70,7 @@ class MainActivity : ComponentActivity() {
             passphrase = prefs.getString("wifi_passphrase", "82828282")
                 ?: "82828282",
             proxyPort = prefs.getInt("proxy_port", 8282),
+            pacPort = prefs.getInt("pac_port", 8283),
             socksPort = prefs.getInt("socks_port", 1080),
             socksUsername = prefs.getString("socks_username", "netfetch") ?: "netfetch",
             socksPassword = prefs.getString("socks_password", "netfetch1080") ?: "netfetch1080",
@@ -84,6 +86,7 @@ class MainActivity : ComponentActivity() {
             .putString("wifi_ssid", config.ssid)
             .putString("wifi_passphrase", config.passphrase)
             .putInt("proxy_port", config.proxyPort)
+            .putInt("pac_port", config.pacPort)
             .putInt("socks_port", config.socksPort)
             .putString("socks_username", config.socksUsername)
             .putString("socks_password", config.socksPassword)
@@ -308,9 +311,6 @@ class MainActivity : ComponentActivity() {
                                     unselectedIconColor = TextMuted,
                                     unselectedTextColor = TextMuted
                                 )
-                            )
-                        }
-                        NetfetchWatermark()
                         }
                     }
                 ) { innerPadding ->
@@ -353,7 +353,8 @@ class MainActivity : ComponentActivity() {
                                 receiverState = receiverStateFlow.value,
                                 onStartReceiver = { checkPermissionsAndStartReceiver() },
                                 onStopReceiver = { stopReceiverConnection() },
-                                onNavigateToDevices = { navController.navigate("devices") }
+                                onNavigateToDevices = { navController.navigate("devices") },
+                                onNavigateToProxyConfig = { navController.navigate("proxy_config") }
                             )
                         }
                         composable("devices") {
@@ -371,6 +372,22 @@ class MainActivity : ComponentActivity() {
                                         vpnPermissionLauncher.launch(vpnIntent)
                                     }
                                 },
+                                onNavigateToProxyConfig = { navController.navigate("proxy_config") },
+                                onUpdateConfig = { newConfig ->
+                                    config = newConfig
+                                    configStateFlow.value = newConfig
+                                    saveConfig(newConfig)
+
+                                    if (state is HotspotState.Active) {
+                                        startHotspotService(newConfig)
+                                    }
+                                }
+                            )
+                        }
+                        composable("proxy_config") {
+                            ProxyConfigScreen(
+                                config = config,
+                                onNavigateBack = { navController.popBackStack() },
                                 onUpdateConfig = { newConfig ->
                                     config = newConfig
                                     configStateFlow.value = newConfig
@@ -442,6 +459,7 @@ class MainActivity : ComponentActivity() {
             putExtra(HotspotService.EXTRA_PASSPHRASE, config.passphrase)
             putExtra(HotspotService.EXTRA_BAND, config.bandPreference.ordinal)
             putExtra(HotspotService.EXTRA_PORT, config.proxyPort)
+            putExtra(HotspotService.EXTRA_PAC_PORT, config.pacPort)
             putExtra(HotspotService.EXTRA_SOCKS_PORT, config.socksPort)
             putExtra(HotspotService.EXTRA_SOCKS_USERNAME, config.socksUsername)
             putExtra(HotspotService.EXTRA_SOCKS_PASSWORD, config.socksPassword)

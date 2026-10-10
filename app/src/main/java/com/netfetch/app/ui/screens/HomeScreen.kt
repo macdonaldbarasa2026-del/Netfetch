@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
@@ -31,6 +32,8 @@ import com.netfetch.app.model.HotspotConfig
 import com.netfetch.app.model.HotspotState
 import com.netfetch.app.model.TetherMode
 import com.netfetch.app.netfetchlink.NetfetchReceiverState
+import com.netfetch.app.ui.components.QrCodeDialog
+import com.netfetch.app.ui.components.QrType
 import com.netfetch.app.ui.theme.*
 
 @Composable
@@ -42,24 +45,26 @@ fun HomeScreen(
     onModeChange: (TetherMode) -> Unit,
     onBandChange: (BandPreference) -> Unit,
     onNavigateToDevices: () -> Unit,
-    onStartReceiver: () -> Unit,
-    onStopReceiver: () -> Unit
+    onNavigateToProxyConfig: () -> Unit = {},
+    onStartReceiver: () -> Unit = {},
+    onStopReceiver: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scrollState = rememberScrollState()
 
     val isActive = state is HotspotState.Active
     val isStarting = state is HotspotState.Starting
-
     val activeState = state as? HotspotState.Active
-    var showSocksPassword by remember { mutableStateOf(false) }
+
+    var showQrDialog by remember { mutableStateOf(false) }
+    var qrDialogType by remember { mutableStateOf(QrType.WIFI_CONNECT) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(CreamBackground)
             .verticalScroll(scrollState)
-            .padding(16.dp),
+            .padding(horizontal = 20.dp, vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // ── Top Header ──
@@ -71,24 +76,24 @@ fun HomeScreen(
             Column {
                 Text(
                     text = "NetFetch",
-                    fontSize = 28.sp,
+                    fontSize = 26.sp,
                     fontWeight = FontWeight.Bold,
                     color = PrimaryBlack
                 )
                 Text(
-                    text = "No-Root Mobile Tethering",
+                    text = "No-Root Tethering & Proxy Engine",
                     fontSize = 12.sp,
                     color = TextMuted
                 )
             }
 
             Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = if (isActive) GreenSuccess.copy(alpha = 0.12f) else SurfaceBorder,
+                shape = RoundedCornerShape(12.dp),
+                color = if (isActive) GreenSuccess.copy(alpha = 0.12f) else CardWhite,
                 border = BorderStroke(1.dp, if (isActive) GreenSuccess else SurfaceBorder)
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
@@ -106,11 +111,11 @@ fun HomeScreen(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = when {
-                            isActive -> if (config.mode == TetherMode.PRO) "PRO ACTIVE" else "ACTIVE"
-                            isStarting -> "STARTING"
+                            isActive -> "HOTSPOT ACTIVE"
+                            isStarting -> "STARTING..."
                             else -> "OFFLINE"
                         },
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = when {
                             isActive -> GreenSuccess
@@ -122,57 +127,12 @@ fun HomeScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(28.dp))
 
-        // ── Mode Selector ──
-        Card(
-            colors = CardDefaults.cardColors(containerColor = CardWhite),
-            border = BorderStroke(1.dp, SurfaceBorder),
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                TetherMode.entries.forEach { mode ->
-                    val selected = config.mode == mode
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (selected) PrimaryBlack else CreamBackground,
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable { onModeChange(mode) }
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                text = mode.displayName,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (selected) CardWhite else TextDark
-                            )
-                            Text(
-                                text = if (mode == TetherMode.NORMAL) "HTTP/HTTPS Proxy" else "SOCKS5 TCP Tunnel",
-                                fontSize = 10.sp,
-                                color = if (selected) CreamBackground.copy(alpha = 0.8f) else TextMuted
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // ── Power Button ──
+        // ── Hero Power Button ──
         Box(
             modifier = Modifier
-                .size(130.dp)
+                .size(136.dp)
                 .clip(CircleShape)
                 .background(if (isActive) PrimaryBlack else CardWhite)
                 .border(
@@ -190,186 +150,221 @@ fun HomeScreen(
             )
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(14.dp))
+
         Text(
             text = when {
-                isActive -> "Tap to Stop NetFetch"
-                isStarting -> "Starting Services..."
-                else -> "Tap to Start NetFetch"
+                isActive -> "Tap to Stop Hotspot"
+                isStarting -> "Starting network services..."
+                else -> "Tap to Start Hotspot"
             },
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
-            color = TextDark
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = PrimaryBlack
         )
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(18.dp))
 
-        // ── NetFetch-to-NetFetch Receiver ──
-        // Available in BOTH Normal and Pro modes.
-        NetfetchReceiverCard(
-            state = receiverState,
-            onStart = onStartReceiver,
-            onStop = onStopReceiver
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-
-        // ── Status Dashboard (Active only) ──
-        if (activeState != null) {
-
-            // Internet & Upstream Status Card
-            val internetColor = if (activeState.internetVerified) GreenSuccess else AmberWarning
-            val internetText = if (activeState.internetVerified) "INTERNET: VERIFIED ✓" else "INTERNET: CHECKING..."
-            Card(
-                colors = CardDefaults.cardColors(containerColor = CardWhite),
-                border = BorderStroke(1.dp, internetColor),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
+        // ── Compact Mode Toggle (Normal vs Pro) ──
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = CardWhite,
+            border = BorderStroke(1.dp, SurfaceBorder),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                TetherMode.entries.forEach { mode ->
+                    val selected = config.mode == mode
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (selected) PrimaryBlack else CardWhite,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { onModeChange(mode) }
                     ) {
-                        Text(
-                            text = "NETFETCH STATUS",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = TextMuted
-                        )
-                        Text(
-                            text = internetText,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = internetColor
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    StatusRow("Upstream", activeState.upstreamState.displayName)
-                    StatusRow("Gateway", activeState.gatewayAddress)
-                    StatusRow("HTTP Proxy", "${activeState.gatewayAddress}:${activeState.config.proxyPort}")
-                    if (activeState.config.mode == TetherMode.PRO) {
-                        StatusRow("SOCKS5", "${activeState.gatewayAddress}:${activeState.config.socksPort}")
-                    }
-                    StatusRow("PAC URL", "http://${activeState.gatewayAddress}:${activeState.config.pacPort}/wpad.dat")
-                    StatusRow("Clients", "${activeState.connectedClients.size} connected")
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // ── Real-Time Net Total Shared Sum Card ──
-            Card(
-                colors = CardDefaults.cardColors(containerColor = CardWhite),
-                border = BorderStroke(1.dp, PrimaryBlack),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
                             Icon(
-                                Icons.Default.DataUsage,
+                                imageVector = if (mode == TetherMode.NORMAL) Icons.Default.Public else Icons.Default.Security,
                                 contentDescription = null,
-                                tint = PrimaryBlack,
-                                modifier = Modifier.size(18.dp)
+                                tint = if (selected) CardWhite else TextMuted,
+                                modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "NET SHARED IN TOTAL",
+                                text = if (mode == TetherMode.NORMAL) "Normal (HTTP/PAC)" else "Pro (Tunnel)",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = PrimaryBlack
+                                color = if (selected) CardWhite else TextDark
                             )
                         }
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = GreenSuccess.copy(alpha = 0.15f)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // ── Unified Active Hotspot Status Dashboard ──
+        if (activeState != null) {
+
+            // 1. Unified Wi-Fi Access & QR Card
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardWhite),
+                border = BorderStroke(1.dp, SurfaceBorder),
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Wi-Fi Connection Details",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PrimaryBlack
+                        )
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = {
+                                    qrDialogType = QrType.WIFI_CONNECT
+                                    showQrDialog = true
+                                },
+                                modifier = Modifier.size(32.dp)
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .background(GreenSuccess, shape = androidx.compose.foundation.shape.CircleShape)
+                                Icon(
+                                    Icons.Default.QrCode,
+                                    contentDescription = "Show QR Code",
+                                    tint = PrimaryBlack,
+                                    modifier = Modifier.size(18.dp)
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "REAL TIME",
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = GreenSuccess
+                            }
+                            IconButton(
+                                onClick = onNavigateToProxyConfig,
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Tune,
+                                    contentDescription = "Configure Ports",
+                                    tint = TextMuted,
+                                    modifier = Modifier.size(16.dp)
                                 )
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                    Text(
-                        text = formatBytes(activeState.totalBytesTransferred),
-                        fontSize = 30.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = PrimaryBlack
-                    )
+                    // Wi-Fi SSID Row
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Network (SSID)", fontSize = 13.sp, color = TextMuted)
+                        Text(
+                            text = config.ssid,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PrimaryBlack
+                        )
+                    }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    // Password Row
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Password", fontSize = 13.sp, color = TextMuted)
+                        Text(
+                            text = config.passphrase,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            color = PrimaryBlack
+                        )
+                    }
 
+                    // Gateway Row
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Proxy Gateway", fontSize = 13.sp, color = TextMuted)
+                        Text(
+                            text = "${activeState.gatewayAddress}:${config.proxyPort}",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PrimaryBlack
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Quick Actions Row
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Default.ArrowUpward,
-                                contentDescription = null,
-                                tint = PrimaryBlack,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Going Out: ${formatBytes(activeState.totalBytesUploaded)}",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = TextDark
-                            )
+                        Button(
+                            onClick = {
+                                qrDialogType = QrType.WIFI_CONNECT
+                                showQrDialog = true
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlack),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.QrCode, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Show QR Code", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Default.ArrowDownward,
-                                contentDescription = null,
-                                tint = GreenSuccess,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Inbound: ${formatBytes(activeState.totalBytesDownloaded)}",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = TextDark
-                            )
+
+                        OutlinedButton(
+                            onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                val clip = ClipData.newPlainText("NetFetch Password", config.passphrase)
+                                clipboard.setPrimaryClip(clip)
+                                Toast.makeText(context, "Password copied!", Toast.LENGTH_SHORT).show()
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Copy Key", fontSize = 12.sp)
                         }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-            // Speed / Devices Card
+            // 2. Unified Live Performance & Devices Strip
             Card(
                 colors = CardDefaults.cardColors(containerColor = CardWhite),
                 border = BorderStroke(1.dp, SurfaceBorder),
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(18.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
@@ -379,394 +374,224 @@ fun HomeScreen(
                     horizontalArrangement = Arrangement.SpaceAround,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Speeds
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.ArrowDownward, contentDescription = null, tint = GreenSuccess, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Download", fontSize = 12.sp, color = TextMuted)
+                            Icon(Icons.Default.ArrowDownward, contentDescription = null, tint = GreenSuccess, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Text("Speed", fontSize = 11.sp, color = TextMuted)
                         }
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = "${activeState.downloadSpeedBps / 1024} KB/s",
-                            fontSize = 17.sp,
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
-                            color = TextDark
+                            color = PrimaryBlack
                         )
                     }
 
-                    Divider(modifier = Modifier.height(36.dp).width(1.dp), color = SurfaceBorder)
+                    HorizontalDivider(modifier = Modifier.height(32.dp).width(1.dp), color = SurfaceBorder)
 
+                    // Total Transferred
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.ArrowUpward, contentDescription = null, tint = PrimaryBlack, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Upload", fontSize = 12.sp, color = TextMuted)
+                            Icon(Icons.Default.DataUsage, contentDescription = null, tint = PrimaryBlack, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Text("Total", fontSize = 11.sp, color = TextMuted)
                         }
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "${activeState.uploadSpeedBps / 1024} KB/s",
-                            fontSize = 17.sp,
+                            text = formatBytes(activeState.totalBytesTransferred),
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
-                            color = TextDark
+                            color = PrimaryBlack
                         )
                     }
 
-                    Divider(modifier = Modifier.height(36.dp).width(1.dp), color = SurfaceBorder)
+                    HorizontalDivider(modifier = Modifier.height(32.dp).width(1.dp), color = SurfaceBorder)
 
+                    // Connected Devices (Clickable)
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.clickable { onNavigateToDevices() }
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Devices, contentDescription = null, tint = AmberWarning, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Devices", fontSize = 12.sp, color = TextMuted)
+                            Icon(Icons.Default.Devices, contentDescription = null, tint = GreenSuccess, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Text("Devices", fontSize = 11.sp, color = TextMuted)
                         }
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "${activeState.connectedClients.size} Active",
-                            fontSize = 17.sp,
+                            text = "${activeState.connectedClients.size} Online",
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
-                            color = AmberWarning
+                            color = GreenSuccess
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-        }
+            Spacer(modifier = Modifier.height(12.dp))
 
-        // ── Hotspot & Proxy Credentials Card ──
-        Card(
-            colors = CardDefaults.cardColors(containerColor = CardWhite),
-            border = BorderStroke(1.dp, SurfaceBorder),
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Hotspot & Proxy Credentials",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = PrimaryBlack,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Text(
-                        text = config.mode.displayName,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = GreenSuccess
-                    )
-                    IconButton(
-                        onClick = {
-                            val sb = StringBuilder()
-                            sb.appendLine("NetFetch Connection Details")
-                            sb.appendLine("Wi-Fi Name: ${config.ssid}")
-                            sb.appendLine("Wi-Fi Password: ${config.passphrase}")
-                            sb.appendLine("Proxy IP: ${config.hostIp}")
-                            sb.appendLine("HTTP Proxy Port: ${config.proxyPort}")
-                            sb.appendLine("PAC URL: http://${config.hostIp}:${config.pacPort}/wpad.dat")
-                            if (config.mode == TetherMode.PRO) {
-                                sb.appendLine("SOCKS5 Port: ${config.socksPort}")
-                                sb.appendLine("NetFetch receivers discover and authenticate to this provider in-app.")
-                                sb.appendLine("Do not share proxy credentials in messages.")
-                            }
-                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_SUBJECT, "NetFetch Connection Details")
-                                putExtra(Intent.EXTRA_TEXT, sb.toString().trim())
-                            }
-                            context.startActivity(
-                                Intent.createChooser(shareIntent, "Share Connection Details")
-                            )
-                        },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Share,
-                            contentDescription = "Share credentials",
-                            tint = PrimaryBlack,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                CredentialItem(label = "Wi-Fi Name (SSID)", value = config.ssid, context = context)
-                CredentialItem(label = "Wi-Fi Key", value = config.passphrase, context = context)
-                CredentialItem(label = "Proxy / Gateway IP", value = config.hostIp, context = context)
-                CredentialItem(label = "HTTP Proxy Port", value = config.proxyPort.toString(), context = context)
-
-                if (config.mode == TetherMode.PRO) {
-                    CredentialItem(label = "SOCKS5 Port (TCP only)", value = config.socksPort.toString(), context = context)
-                    CredentialItem(label = "SOCKS5 Username", value = config.socksUsername, context = context)
-                    CredentialItem(
-                        label = "SOCKS5 Password",
-                        value = if (showSocksPassword) config.socksPassword else "••••••••",
-                        context = context
-                    )
-                    TextButton(
-                        onClick = { showSocksPassword = !showSocksPassword },
-                        modifier = Modifier.align(Alignment.End)
-                    ) {
-                        Text(
-                            if (showSocksPassword) "Hide password" else "Show password",
-                            color = PrimaryBlack
-                        )
-                    }
-                }
-
-                CredentialItem(label = "PAC URL", value = "http://${config.hostIp}:${config.pacPort}/wpad.dat", context = context)
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // ── Band Selection Card ──
-        Card(
-            colors = CardDefaults.cardColors(containerColor = CardWhite),
-            border = BorderStroke(1.dp, SurfaceBorder),
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.CellTower, contentDescription = null, tint = PrimaryBlack)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Wi-Fi Frequency Band", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextDark)
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    BandPreference.entries.forEach { band ->
-                        val selected = config.bandPreference == band
-                        FilterChip(
-                            selected = selected,
-                            onClick = { onBandChange(band) },
-                            label = { Text(band.name.replace("BAND_", "").replace("_", " ")) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = PrimaryBlack,
-                                selectedLabelColor = CardWhite,
-                                containerColor = CreamBackground,
-                                labelColor = TextDark
-                            ),
-                            border = FilterChipDefaults.filterChipBorder(
-                                borderColor = SurfaceBorder,
-                                selectedBorderColor = PrimaryBlack,
-                                enabled = true,
-                                selected = selected
-                            ),
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-            }
-        }
-
-        // ── Error Card ──
-        if (state is HotspotState.Error) {
-            Spacer(modifier = Modifier.height(16.dp))
-            Card(
-                colors = CardDefaults.cardColors(containerColor = RedError.copy(alpha = 0.1f)),
-                border = BorderStroke(1.dp, RedError),
-                shape = RoundedCornerShape(12.dp),
+            // 3. Compact Stealth & PC Broadband Badge
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = GreenSuccess.copy(alpha = 0.08f),
+                border = BorderStroke(1.dp, GreenSuccess.copy(alpha = 0.25f)),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Icon(Icons.Default.Error, contentDescription = null, tint = RedError)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(state.errorMessage, fontSize = 13.sp, color = TextDark)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun NetfetchReceiverCard(
-    state: NetfetchReceiverState,
-    onStart: () -> Unit,
-    onStop: () -> Unit
-) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = CardWhite),
-        border = BorderStroke(1.dp, SurfaceBorder),
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Text(
-                text = "NetFetch-to-NetFetch",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                color = PrimaryBlack
-            )
-
-            Text(
-                text = "Discover a nearby provider for the selected mode. Pro starts a TCP VPN tunnel; Normal provides authenticated HTTP/PAC details for proxy configuration.",
-                fontSize = 12.sp,
-                color = TextMuted
-            )
-
-            when (state) {
-                NetfetchReceiverState.Idle -> {
-                    ReceiverActionButton(
-                        text = "Connect to NetFetch Provider",
-                        onClick = onStart
-                    )
-                }
-
-                NetfetchReceiverState.Searching -> {
-                    ReceiverStatusText(
-                        text = "Searching for a nearby NetFetch provider..."
-                    )
-                }
-
-                is NetfetchReceiverState.ProviderFound -> {
-                    val modeLabel = if (state.providerMode == "PRO") "Pro" else "Normal"
-                    ReceiverStatusText(
-                        text = "Provider found: ${state.deviceName} [$modeLabel]\nConnecting..."
-                    )
-                }
-
-                NetfetchReceiverState.Connecting -> {
-                    ReceiverStatusText(text = "Connecting to NetFetch provider...")
-                }
-
-                NetfetchReceiverState.Authenticating -> {
-                    ReceiverStatusText(text = "Authenticating with provider...")
-                }
-
-                is NetfetchReceiverState.Connected -> {
-                    val modeLabel = if (state.providerMode == "PRO") "Pro" else "Normal"
-                    val transportLabel = if (state.providerMode == "PRO") {
-                        "Provider session established; receiver TCP VPN is starting"
-                    } else {
-                        "Provider session established. Configure this device's HTTP proxy or PAC before browsing:\n" +
-                            "HTTP ${state.providerAddress}:${state.httpPort}\nPAC: http://${state.providerAddress}:${state.pacPort}/wpad.dat"
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Security, contentDescription = null, tint = GreenSuccess, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Stealth TTL 64 Active • PC Broadband Ready",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = GreenSuccess
+                        )
                     }
 
-                    ReceiverStatusText(
-                        text = "Connected [$modeLabel] — ${state.providerAddress}\n$transportLabel"
-                    )
-
-                    ReceiverActionButton(
-                        text = "Disconnect",
-                        onClick = onStop
-                    )
-                }
-
-                is NetfetchReceiverState.Unsupported -> {
                     Text(
-                        text = "Unsupported provider: ${state.reason}",
-                        fontSize = 12.sp,
-                        color = AmberWarning
-                    )
-
-                    ReceiverActionButton(
-                        text = "Try Again",
-                        onClick = onStart
-                    )
-                }
-
-                is NetfetchReceiverState.Reconnecting -> {
-                    ReceiverStatusText(
-                        text = "Reconnecting... ${state.reason}"
+                        text = "PORTAL ↗",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = PrimaryBlack,
+                        modifier = Modifier.clickable {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("http://${activeState.gatewayAddress}:${config.proxyPort}/"))
+                            try { context.startActivity(intent) } catch (_: Exception) {}
+                        }
                     )
                 }
+            }
 
-                is NetfetchReceiverState.Error -> {
-                    Text(
-                        text = state.message,
-                        fontSize = 12.sp,
-                        color = RedError
-                    )
+        } else {
 
-                    ReceiverActionButton(
-                        text = "Try Again",
-                        onClick = onStart
-                    )
+            // ── Inactive (Idle) View ──
+            Card(
+                colors = CardDefaults.cardColors(containerColor = CardWhite),
+                border = BorderStroke(1.dp, SurfaceBorder),
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Hotspot Configuration",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PrimaryBlack
+                        )
+
+                        IconButton(
+                            onClick = {
+                                qrDialogType = QrType.WIFI_CONNECT
+                                showQrDialog = true
+                            },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.QrCode,
+                                contentDescription = "Show QR Code",
+                                tint = PrimaryBlack,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Wi-Fi Name", fontSize = 13.sp, color = TextMuted)
+                        Text(config.ssid, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = PrimaryBlack)
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Password", fontSize = 13.sp, color = TextMuted)
+                        Text(config.passphrase, fontSize = 13.sp, fontWeight = FontWeight.Bold, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, color = PrimaryBlack)
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Wi-Fi Band Selector
+                    Text("Wi-Fi Frequency Band", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextDark)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        BandPreference.entries.forEach { band ->
+                            val selected = config.bandPreference == band
+                            FilterChip(
+                                selected = selected,
+                                onClick = { onBandChange(band) },
+                                label = { Text(band.name.replace("BAND_", "").replace("_", " "), fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = PrimaryBlack,
+                                    selectedLabelColor = CardWhite,
+                                    containerColor = CreamBackground,
+                                    labelColor = TextDark
+                                ),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    borderColor = SurfaceBorder,
+                                    selectedBorderColor = PrimaryBlack,
+                                    enabled = true,
+                                    selected = selected
+                                ),
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Error Alert ──
+        if (state is HotspotState.Error) {
+            Spacer(modifier = Modifier.height(14.dp))
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = RedError.copy(alpha = 0.1f),
+                border = BorderStroke(1.dp, RedError.copy(alpha = 0.3f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = RedError, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(state.errorMessage, fontSize = 12.sp, color = RedError, fontWeight = FontWeight.Medium)
                 }
             }
         }
     }
-}
 
-@Composable
-private fun ReceiverStatusText(text: String) {
-    Text(
-        text = text,
-        fontSize = 13.sp,
-        fontWeight = FontWeight.Medium,
-        color = PrimaryBlack
-    )
-}
-
-@Composable
-private fun ReceiverActionButton(
-    text: String,
-    onClick: () -> Unit
-) {
-    Button(
-        modifier = Modifier.fillMaxWidth(),
-        onClick = onClick
-    ) {
-        Text(text)
-    }
-}
-
-@Composable
-private fun StatusRow(label: String, value: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 3.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(label, fontSize = 12.sp, color = TextMuted, modifier = Modifier.weight(0.4f))
-        Text(value, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextDark, modifier = Modifier.weight(0.6f))
-    }
-}
-
-@Composable
-fun CredentialItem(label: String, value: String, context: Context) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(label, fontSize = 11.sp, color = TextMuted)
-            Text(value, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextDark)
-        }
-
-        IconButton(
-            onClick = {
-                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                val clip = ClipData.newPlainText(label, value)
-                clipboard.setPrimaryClip(clip)
-                Toast.makeText(context, "Copied $label", Toast.LENGTH_SHORT).show()
-            },
-            modifier = Modifier.size(32.dp)
-        ) {
-            Icon(Icons.Default.ContentCopy, contentDescription = "Copy", tint = PrimaryBlack, modifier = Modifier.size(16.dp))
-        }
+    // QR Code Dialog
+    if (showQrDialog) {
+        QrCodeDialog(
+            config = config,
+            initialType = qrDialogType,
+            onDismissRequest = { showQrDialog = false }
+        )
     }
 }
 

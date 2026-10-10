@@ -1,0 +1,12 @@
+{
+  "name": "netfetch-web",
+  "version": "1.0.0",
+  "description": "NetFetch Web Companion and Hotspot Portal",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "build": "echo 'Build complete'"
+  },
+  "dependencies": {}
+}

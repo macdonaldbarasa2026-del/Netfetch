@@ -14,7 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -23,6 +23,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.netfetch.app.model.ClientDevice
 import com.netfetch.app.model.HotspotConfig
+import com.netfetch.app.ui.components.QrCodeDialog
+import com.netfetch.app.ui.components.QrType
 import com.netfetch.app.ui.theme.*
 import java.text.SimpleDateFormat
 import java.util.*
@@ -33,6 +35,7 @@ fun DevicesScreen(
     config: HotspotConfig
 ) {
     val context = LocalContext.current
+    var showQrDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -153,15 +156,34 @@ fun DevicesScreen(
                                 tint = PrimaryBlack
                             )
                         }
+
+                        IconButton(
+                            onClick = { showQrDialog = true }
+                        ) {
+                            Icon(
+                                Icons.Default.QrCode,
+                                contentDescription = "Show Wi-Fi QR Code",
+                                tint = PrimaryBlack
+                            )
+                        }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = "PAC: http://${config.hostIp}:${config.pacPort}/wpad.dat",
+                    text = "PAC URL: http://${config.hostIp}:${config.pacPort}/wpad.dat",
                     fontSize = 11.sp,
                     color = TextMuted
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Text(
+                    text = "Web Portal: http://${config.hostIp}:${config.proxyPort}/ (Open in browser for 1-click Windows .bat setup)",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = PrimaryBlack
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -244,6 +266,14 @@ fun DevicesScreen(
                 }
             }
         }
+    }
+
+    if (showQrDialog) {
+        QrCodeDialog(
+            config = config,
+            initialType = QrType.WIFI_CONNECT,
+            onDismissRequest = { showQrDialog = false }
+        )
     }
 }
 

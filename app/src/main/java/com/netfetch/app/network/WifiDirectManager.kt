@@ -383,16 +383,108 @@ class WifiDirectManager(
         groupInfoRetryCount = 0
         unregisterReceiver()
 
-        wifiP2pManager?.removeGroup(channel, object : WifiP2pManager.ActionListener {
-            override fun onSuccess() {
-                Log.i(TAG, "Wi-Fi Direct group stopped successfully")
+        val manager = wifiP2pManager
+        val p2pChannel = channel
+
+        if (manager != null && p2pChannel != null) {
+            // 1. Cancel any active or pending connection handshakes immediately
+            try {
+                manager.cancelConnect(p2pChannel, object : WifiP2pManager.ActionListener {
+                    override fun onSuccess() { Log.d(TAG, "cancelConnect succeeded") }
+                    override fun onFailure(reason: Int) { Log.d(TAG, "cancelConnect failed: $reason") }
+                })
+            } catch (e: Exception) {
+                Log.d(TAG, "cancelConnect error: ${e.message}")
             }
-            override fun onFailure(reason: Int) {
-                Log.w(TAG, "Failed to remove Wi-Fi Direct group: $reason")
+
+            // 2. Stop peer discovery and radio scan announcements
+            try {
+                manager.stopPeerDiscovery(p2pChannel, object : WifiP2pManager.ActionListener {
+                    override fun onSuccess() { Log.d(TAG, "stopPeerDiscovery succeeded") }
+                    override fun onFailure(reason: Int) { Log.d(TAG, "stopPeerDiscovery failed: $reason") }
+                })
+            } catch (e: Exception) {
+                Log.d(TAG, "stopPeerDiscovery error: ${e.message}")
             }
-        })
+
+            // 3. Clear all registered local services (DNS-SD / UPnP) so mDNS beacons cease
+            try {
+                manager.clearLocalServices(p2pChannel, object : WifiP2pManager.ActionListener {
+                    override fun onSuccess() { Log.d(TAG, "clearLocalServices succeeded") }
+                    override fun onFailure(reason: Int) { Log.d(TAG, "clearLocalServices failed: $reason") }
+                })
+                manager.clearServiceRequests(p2pChannel, null)
+            } catch (e: Exception) {
+                Log.d(TAG, "clearLocalServices error: ${e.message}")
+            }
+
+            // 4. Remove active group owner
+            manager.removeGroup(p2pChannel, object : WifiP2pManager.ActionListener {
+                override fun onSuccess() {
+                    Log.i(TAG, "Wi-Fi Direct group removed successfully")
+                }
+                override fun onFailure(reason: Int) {
+                    Log.w(TAG, "Failed to remove Wi-Fi Direct group: $reason")
+                }
+            })
+
+            // 5. Purge persistent remembered groups from wpa_supplicant via reflection.
+            // This prevents the Wi-Fi chip firmware from keeping autonomous GO beacons alive
+            // so the SSID disappears from other devices' Wi-Fi lists immediately like a real router.
+            purgePersistentGroups(manager, p2pChannel)
+
+            // 6. Close the channel to force Android's WifiP2pService to tear down
+            // the virtual p2p interface (p2p0 / p2p-wlan0) instantly.
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                    p2pChannel.close()
+                } else {
+                    val closeMethod = p2pChannel.javaClass.getMethod("close")
+                    closeMethod.invoke(p2pChannel)
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "Channel close error: ${e.message}")
+            }
+        }
+
+        // 7. Re-initialize a clean channel ready for next start
+        channel = wifiP2pManager?.initialize(context, context.mainLooper, null)
         currentGroup = null
         onClientsChanged(emptyList())
+    }
+
+    /**
+     * Purge persistent Wi-Fi Direct groups via reflection.
+     * Tells wpa_supplicant to drop stored GO networks and cease probe responses.
+     */
+    private fun purgePersistentGroups(manager: WifiP2pManager, p2pChannel: WifiP2pManager.Channel) {
+        try {
+            val deletePersistentGroupMethod = manager.javaClass.getMethod(
+                "deletePersistentGroup",
+                WifiP2pManager.Channel::class.java,
+                Int::class.javaPrimitiveType,
+                WifiP2pManager.ActionListener::class.java
+            )
+
+            // wpa_supplicant assigns netId indices 0..16 to remembered P2P networks
+            for (netId in 0..16) {
+                try {
+                    deletePersistentGroupMethod.invoke(
+                        manager,
+                        p2pChannel,
+                        netId,
+                        object : WifiP2pManager.ActionListener {
+                            override fun onSuccess() {
+                                Log.d(TAG, "Purged persistent group netId $netId")
+                            }
+                            override fun onFailure(reason: Int) {}
+                        }
+                    )
+                } catch (_: Exception) {}
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "deletePersistentGroup reflection not available: ${e.message}")
+        }
     }
 
     private fun registerReceiver() {

@@ -168,6 +168,61 @@ fun HelpScreen(config: HotspotConfig) {
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // ── Web Portal & 1-Click Setup Guide ──
+        Card(
+            colors = CardDefaults.cardColors(containerColor = CardWhite),
+            border = BorderStroke(1.dp, PrimaryBlack),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Language, contentDescription = null, tint = PrimaryBlack)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Instant Web Portal & 1-Click Setup", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = TextDark)
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "Connected laptops, PCs, iPhones, and tablets can immediately open their web browser and visit:",
+                    fontSize = 12.sp,
+                    color = TextMuted
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = CreamBackground,
+                    border = BorderStroke(1.dp, SurfaceBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "http://${config.hostIp}:${config.proxyPort}/",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = PrimaryBlack,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "• Download 1-Click Windows Setup (.bat): Configures Windows system proxy with one click.\n" +
+                            "• Download Disable Script (.bat): Reverts Windows proxy when disconnecting.\n" +
+                            "• Auto-PAC URL: http://${config.hostIp}:${config.pacPort}/wpad.dat\n" +
+                            "• Carrier Tethering Protection: All traffic originates through native phone sockets (TTL 64) with zero carrier hotspot throttling.",
+                    fontSize = 12.sp,
+                    color = TextDark,
+                    lineHeight = 18.sp
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         // Pro-specific setup
         if (isPro) {
             Card(

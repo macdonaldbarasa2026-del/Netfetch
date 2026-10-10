@@ -106,6 +106,8 @@ class HttpProxyServer(
 
         try {
             clientSocket.tcpNoDelay = true
+            clientSocket.sendBufferSize = 128 * 1024
+            clientSocket.receiveBufferSize = 128 * 1024
             if (!clientAuthorizer(clientIp)) {
                 clientSocket.getOutputStream().write(
                     "HTTP/1.1 407 Proxy Authentication Required\r\nConnection: close\r\n\r\n"
@@ -140,6 +142,25 @@ class HttpProxyServer(
 
             val method = parts[0]
             val target = parts[1]
+
+            // Check if client is directly hitting the NetFetch portal or utility endpoints
+            val hostHeader = headerLines.firstOrNull { it.startsWith("Host:", ignoreCase = true) }
+                ?.substring(5)?.trim() ?: ""
+
+            if (!method.equals("CONNECT", ignoreCase = true) &&
+                NetfetchWebPortal.isPortalRequest(target, hostHeader, "192.168.49.1", port)
+            ) {
+                val handled = NetfetchWebPortal.handleRequest(
+                    target = target,
+                    output = clientOut,
+                    gatewayIp = "192.168.49.1",
+                    proxyPort = port,
+                    pacPort = port + 1,
+                    socksPort = 1080,
+                    modeName = "NetFetch High-Speed"
+                )
+                if (handled) return
+            }
 
             if (method.equals("CONNECT", ignoreCase = true)) {
                 val colonIdx = target.lastIndexOf(':')
@@ -232,18 +253,21 @@ class HttpProxyServer(
             ?: com.netfetch.app.network.NetfetchUpstreamRuntime.fallbackNetwork()
 
         /*
-         * Resolve hostname: try selected Android Network DNS first,
-         * then fall back to system DNS.
+         * Resolve hostname using NetFetch high-performance DNS cache & engine
          */
         val addresses = try {
-            upstream?.getAllByName(host)?.toList()?.takeIf { it.isNotEmpty() }
+            com.netfetch.app.network.NetfetchDnsEngine.resolve(host, upstream)
         } catch (_: Exception) {
-            null
-        } ?: try {
-            java.net.InetAddress.getAllByName(host).toList().takeIf { it.isNotEmpty() }
-        } catch (_: Exception) {
-            null
-        } ?: throw java.net.UnknownHostException("No address found for $host")
+            try {
+                upstream?.getAllByName(host)?.toList()?.takeIf { it.isNotEmpty() }
+            } catch (_: Exception) {
+                null
+            } ?: try {
+                java.net.InetAddress.getAllByName(host).toList().takeIf { it.isNotEmpty() }
+            } catch (_: Exception) {
+                null
+            } ?: throw java.net.UnknownHostException("No address found for $host")
+        }
 
         var lastError: Exception? = null
 
@@ -263,6 +287,8 @@ class HttpProxyServer(
 
                 socket.tcpNoDelay = true
                 socket.keepAlive = true
+                socket.sendBufferSize = 128 * 1024
+                socket.receiveBufferSize = 128 * 1024
 
                 com.netfetch.app.network.NetfetchUpstreamRuntime.protect(socket)
 
@@ -294,6 +320,8 @@ class HttpProxyServer(
                 directSocket = Socket()
                 directSocket.tcpNoDelay = true
                 directSocket.keepAlive = true
+                directSocket.sendBufferSize = 128 * 1024
+                directSocket.receiveBufferSize = 128 * 1024
                 com.netfetch.app.network.NetfetchUpstreamRuntime.protect(directSocket)
                 directSocket.connect(
                     InetSocketAddress(address, port),

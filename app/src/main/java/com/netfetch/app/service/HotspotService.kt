@@ -4,6 +4,7 @@ import android.app.*
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -77,6 +78,7 @@ class HotspotService : Service() {
     private var providerDiscovery: NetfetchProviderDiscovery? = null
     private var pacServer: PacServer? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     private var currentConfig = HotspotConfig()
     private var activeClients = emptyList<ClientDevice>()
@@ -152,6 +154,7 @@ class HotspotService : Service() {
                 val ssid = intent.getStringExtra(EXTRA_SSID) ?: currentConfig.ssid
                 val passphrase = intent.getStringExtra(EXTRA_PASSPHRASE) ?: currentConfig.passphrase
                 val port = intent.getIntExtra(EXTRA_PORT, 8282)
+                val pacPort = intent.getIntExtra(EXTRA_PAC_PORT, 8283)
                 val socksPort = intent.getIntExtra(EXTRA_SOCKS_PORT, 1080)
                 val socksUsername = intent.getStringExtra(EXTRA_SOCKS_USERNAME) ?: currentConfig.socksUsername
                 val socksPassword = intent.getStringExtra(EXTRA_SOCKS_PASSWORD) ?: currentConfig.socksPassword
@@ -164,6 +167,7 @@ class HotspotService : Service() {
                     passphrase = passphrase,
                     bandPreference = band,
                     proxyPort = port,
+                    pacPort = pacPort,
                     socksPort = socksPort,
                     socksUsername = socksUsername,
                     socksPassword = socksPassword,
@@ -603,12 +607,27 @@ class HotspotService : Service() {
         ).apply {
             acquire(12 * 60 * 60 * 1000L)
         }
+
+        try {
+            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            wifiLock = wifiManager?.createWifiLock(
+                WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                "NetFetch::HighPerfWifiLock"
+            )?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+            Log.i(TAG, "High-performance Wi-Fi Lock acquired successfully")
+        } catch (e: Exception) {
+            Log.w(TAG, "Unable to acquire Wi-Fi Lock: ${e.message}")
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
         stopHotspot()
         wakeLock?.let { if (it.isHeld) it.release() }
+        wifiLock?.let { if (it.isHeld) it.release() }
         serviceScope.cancel()
     }
 
@@ -623,6 +642,7 @@ class HotspotService : Service() {
         const val EXTRA_PASSPHRASE = "com.netfetch.app.extra.PASSPHRASE"
         const val EXTRA_BAND = "extra_band"
         const val EXTRA_PORT = "extra_port"
+        const val EXTRA_PAC_PORT = "extra_pac_port"
         const val EXTRA_MODE = "extra_mode"
     }
 
