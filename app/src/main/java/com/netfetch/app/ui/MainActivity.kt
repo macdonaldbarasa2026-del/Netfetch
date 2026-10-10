@@ -253,67 +253,78 @@ class MainActivity : ComponentActivity() {
                             NavigationBar(
                                 windowInsets = WindowInsets(0, 0, 0, 0),
                                 containerColor = CreamBackground,
-                            contentColor = PrimaryBlack
-                        ) {
-                            NavigationBarItem(
-                                selected = currentRoute == "home",
-                                onClick = { navController.navigate("home") { popUpTo("home") { inclusive = true } } },
-                                icon = { Icon(Icons.Default.WifiTethering, contentDescription = "Home") },
-                                label = { Text("Home") },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = PrimaryBlack,
-                                    selectedTextColor = PrimaryBlack,
-                                    indicatorColor = PrimaryBlack.copy(alpha = 0.1f),
-                                    unselectedIconColor = TextMuted,
-                                    unselectedTextColor = TextMuted
+                                contentColor = PrimaryBlack
+                            ) {
+                                NavigationBarItem(
+                                    selected = currentRoute == "home",
+                                    onClick = { navController.navigate("home") },
+                                    icon = {
+                                        Icon(Icons.Default.WifiTethering, contentDescription = "Home")
+                                    },
+                                    label = { Text("Home") },
+                                    colors = NavigationBarItemDefaults.colors(
+                                        selectedIconColor = PrimaryBlack,
+                                        selectedTextColor = PrimaryBlack,
+                                        indicatorColor = PrimaryBlack.copy(alpha = 0.1f),
+                                        unselectedIconColor = TextMuted,
+                                        unselectedTextColor = TextMuted
+                                    )
                                 )
-                            )
-                            NavigationBarItem(
-                                selected = currentRoute == "devices",
-                                onClick = { navController.navigate("devices") },
-                                icon = {
-                                    val count = if (state is HotspotState.Active) (state as HotspotState.Active).connectedClients.size else 0
-                                    BadgedBox(badge = { if (count > 0) Badge { Text("$count") } }) {
-                                        Icon(Icons.Default.Devices, contentDescription = "Devices")
-                                    }
-                                },
-                                label = { Text("Devices") },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = PrimaryBlack,
-                                    selectedTextColor = PrimaryBlack,
-                                    indicatorColor = PrimaryBlack.copy(alpha = 0.1f),
-                                    unselectedIconColor = TextMuted,
-                                    unselectedTextColor = TextMuted
+                                NavigationBarItem(
+                                    selected = currentRoute == "devices",
+                                    onClick = { navController.navigate("devices") },
+                                    icon = {
+                                        val count = (state as? HotspotState.Active)?.connectedClients?.size ?: 0
+                                        BadgedBox(
+                                            badge = {
+                                                if (count > 0) Badge { Text("$count") }
+                                            }
+                                        ) {
+                                            Icon(Icons.Default.Devices, contentDescription = "Devices")
+                                        }
+                                    },
+                                    label = { Text("Devices") },
+                                    colors = NavigationBarItemDefaults.colors(
+                                        selectedIconColor = PrimaryBlack,
+                                        selectedTextColor = PrimaryBlack,
+                                        indicatorColor = PrimaryBlack.copy(alpha = 0.1f),
+                                        unselectedIconColor = TextMuted,
+                                        unselectedTextColor = TextMuted
+                                    )
                                 )
-                            )
-                            NavigationBarItem(
-                                selected = currentRoute == "settings",
-                                onClick = { navController.navigate("settings") },
-                                icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
-                                label = { Text("Settings") },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = PrimaryBlack,
-                                    selectedTextColor = PrimaryBlack,
-                                    indicatorColor = PrimaryBlack.copy(alpha = 0.1f),
-                                    unselectedIconColor = TextMuted,
-                                    unselectedTextColor = TextMuted
+                                NavigationBarItem(
+                                    selected = currentRoute == "settings",
+                                    onClick = { navController.navigate("settings") },
+                                    icon = {
+                                        Icon(Icons.Default.Settings, contentDescription = "Settings")
+                                    },
+                                    label = { Text("Settings") },
+                                    colors = NavigationBarItemDefaults.colors(
+                                        selectedIconColor = PrimaryBlack,
+                                        selectedTextColor = PrimaryBlack,
+                                        indicatorColor = PrimaryBlack.copy(alpha = 0.1f),
+                                        unselectedIconColor = TextMuted,
+                                        unselectedTextColor = TextMuted
+                                    )
                                 )
-                            )
-                            NavigationBarItem(
-                                selected = currentRoute == "help",
-                                onClick = { navController.navigate("help") },
-                                icon = { Icon(Icons.Default.HelpOutline, contentDescription = "Help") },
-                                label = { Text("Help") },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = PrimaryBlack,
-                                    selectedTextColor = PrimaryBlack,
-                                    indicatorColor = PrimaryBlack.copy(alpha = 0.1f),
-                                    unselectedIconColor = TextMuted,
-                                    unselectedTextColor = TextMuted
+                                NavigationBarItem(
+                                    selected = currentRoute == "help",
+                                    onClick = { navController.navigate("help") },
+                                    icon = {
+                                        Icon(Icons.Default.HelpOutline, contentDescription = "Help")
+                                    },
+                                    label = { Text("Help") },
+                                    colors = NavigationBarItemDefaults.colors(
+                                        selectedIconColor = PrimaryBlack,
+                                        selectedTextColor = PrimaryBlack,
+                                        indicatorColor = PrimaryBlack.copy(alpha = 0.1f),
+                                        unselectedIconColor = TextMuted,
+                                        unselectedTextColor = TextMuted
+                                    )
                                 )
+                            }
                         }
                     }
-                ) { innerPadding ->
                     NavHost(
                         navController = navController,
                         startDestination = "home",
