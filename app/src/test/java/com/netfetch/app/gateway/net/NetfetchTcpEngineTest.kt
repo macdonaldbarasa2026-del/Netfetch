@@ -40,7 +40,6 @@ class NetfetchTcpEngineTest {
         }
 
         val ip = Ipv4Header(
-            version = 4,
             headerLength = 20,
             totalLength = 40,
             protocol = PROTO_TCP,
@@ -55,8 +54,7 @@ class NetfetchTcpEngineTest {
             acknowledgement = 0L,
             dataOffset = 20,
             flags = TcpHeader.RST,
-            window = 65535,
-            urgentPointer = 0
+            window = 65535
         )
 
         val dummyPacket = ByteArray(40)
@@ -72,7 +70,6 @@ class NetfetchTcpEngineTest {
         }
 
         val ip = Ipv4Header(
-            version = 4,
             headerLength = 20,
             totalLength = 40,
             protocol = PROTO_TCP,
@@ -87,8 +84,7 @@ class NetfetchTcpEngineTest {
             acknowledgement = 0L,
             dataOffset = 20,
             flags = TcpHeader.SYN,
-            window = 65535,
-            urgentPointer = 0
+            window = 65535
         )
 
         val dummyPacket = ByteArray(40)
