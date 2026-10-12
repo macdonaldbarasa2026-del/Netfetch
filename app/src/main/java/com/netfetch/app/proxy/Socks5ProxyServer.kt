@@ -39,11 +39,19 @@ class Socks5ProxyServer(
     private var serverSocket: ServerSocket? = null
     @Volatile private var isRunning = false
     private val socksThreadCounter = AtomicLong(0L)
-    private val socksExecutor = java.util.concurrent.Executors.newCachedThreadPool { runnable ->
-        Thread(runnable, "NetFetch-Socks5-${socksThreadCounter.incrementAndGet()}").apply {
-            isDaemon = true
-        }
-    }
+    private val socksExecutor = java.util.concurrent.ThreadPoolExecutor(
+        4,
+        64,
+        60L,
+        java.util.concurrent.TimeUnit.SECONDS,
+        java.util.concurrent.SynchronousQueue(),
+        { runnable ->
+            Thread(runnable, "NetFetch-Socks5-${socksThreadCounter.incrementAndGet()}").apply {
+                isDaemon = true
+            }
+        },
+        java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy()
+    )
     private val proxyDispatcher = socksExecutor.asCoroutineDispatcher()
     private val proxyScope = CoroutineScope(proxyDispatcher + SupervisorJob())
 
@@ -313,6 +321,10 @@ class Socks5ProxyServer(
             val remaining = clientConnectionCounts[clientIp]?.decrementAndGet() ?: 0
             if (remaining <= 0) {
                 clientConnectionCounts.remove(clientIp)
+                connectedClientsMap.remove(clientIp)
+                clientUploadBytes.remove(clientIp)
+                clientDownloadBytes.remove(clientIp)
+                com.netfetch.app.network.NetfetchDiagnostics.recordDisconnect("SOCKS5 client $clientIp disconnected")
             }
         }
     }
@@ -381,16 +393,23 @@ class Socks5ProxyServer(
                 socket.sendBufferSize = 128 * 1024
                 socket.receiveBufferSize = 128 * 1024
 
+                if (upstream != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                    runCatching { upstream.bindSocket(socket) }
+                }
+
                 com.netfetch.app.network.NetfetchUpstreamRuntime.protect(socket)
 
+                val connectStart = android.os.SystemClock.elapsedRealtime()
                 socket.connect(
                     InetSocketAddress(address, port),
                     CONNECT_TIMEOUT_MS
                 )
+                val elapsed = android.os.SystemClock.elapsedRealtime() - connectStart
+                com.netfetch.app.network.NetfetchDiagnostics.recordTcpConnect(elapsed)
 
                 Log.d(
                     TAG,
-                    "Connected through upstream: $host/$address:$port"
+                    "Connected through upstream: $host/$address:$port in ${elapsed}ms"
                 )
 
                 return socket
@@ -546,31 +565,32 @@ class Socks5ProxyServer(
     }
 
     private fun pipeStreams(clientIp: String, input: InputStream, output: OutputStream, isUpload: Boolean) {
-        val buffer = ByteArray(32 * 1024)
-        try {
-            var read: Int
-            while (input.read(buffer).also { read = it } != -1) {
-                output.write(buffer, 0, read)
-                if (input.available() == 0) {
-                    output.flush()
-                }
-                val amount = read.toLong()
+        com.netfetch.app.network.NetfetchBufferPool.useBuffer { buffer ->
+            try {
+                var read: Int
+                while (input.read(buffer).also { read = it } != -1) {
+                    output.write(buffer, 0, read)
+                    if (input.available() == 0) {
+                        output.flush()
+                    }
+                    val amount = read.toLong()
 
-                if (isUpload) {
-                    totalUploadCounter.addAndGet(amount)
-                    clientUploadBytes[clientIp]?.addAndGet(amount)
-                } else {
-                    totalDownloadCounter.addAndGet(amount)
-                    clientDownloadBytes[clientIp]?.addAndGet(amount)
-                }
+                    if (isUpload) {
+                        totalUploadCounter.addAndGet(amount)
+                        clientUploadBytes[clientIp]?.addAndGet(amount)
+                    } else {
+                        totalDownloadCounter.addAndGet(amount)
+                        clientDownloadBytes[clientIp]?.addAndGet(amount)
+                    }
 
-                // Anti-Jam Fairness: cooperative yield during heavy stream when multiple devices connected
-                if (connectedClientsMap.size > 1 && read > 16384) {
-                    Thread.yield()
+                    // Anti-Jam Fairness: cooperative yield during heavy stream when multiple devices connected
+                    if (connectedClientsMap.size > 1 && read > 16384) {
+                        Thread.yield()
+                    }
                 }
-            }
-            output.flush()
-        } catch (_: Exception) {}
+                output.flush()
+            } catch (_: Exception) {}
+        }
     }
 
     private fun readFully(input: InputStream, buf: ByteArray) {
@@ -620,6 +640,13 @@ class Socks5ProxyServer(
                 }
 
                 onBandwidthUpdate(upSpeed, downSpeed, currUp, currDown)
+                com.netfetch.app.network.NetfetchDiagnostics.recordThroughput(
+                    upSpeed = upSpeed,
+                    downSpeed = downSpeed,
+                    totalUp = currUp,
+                    totalDown = currDown,
+                    clientCount = connectedClientsMap.size
+                )
                 onClientActivity(HashMap(connectedClientsMap))
             }
         }

@@ -37,11 +37,19 @@ class HttpProxyServer(
     private var serverSocket: ServerSocket? = null
     @Volatile private var isRunning = false
     private val proxyThreadCounter = AtomicLong(0L)
-    private val proxyExecutor = java.util.concurrent.Executors.newCachedThreadPool { runnable ->
-        Thread(runnable, "NetFetch-HttpPipe-${proxyThreadCounter.incrementAndGet()}").apply {
-            isDaemon = true
-        }
-    }
+    private val proxyExecutor = java.util.concurrent.ThreadPoolExecutor(
+        4,
+        64,
+        60L,
+        java.util.concurrent.TimeUnit.SECONDS,
+        java.util.concurrent.SynchronousQueue(),
+        { runnable ->
+            Thread(runnable, "NetFetch-HttpPipe-${proxyThreadCounter.incrementAndGet()}").apply {
+                isDaemon = true
+            }
+        },
+        java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy()
+    )
     private val proxyDispatcher = proxyExecutor.asCoroutineDispatcher()
     private val proxyScope = CoroutineScope(proxyDispatcher + SupervisorJob())
 
@@ -136,7 +144,7 @@ class HttpProxyServer(
 
             trackClientConnection(clientIp)
             clientSocket.soTimeout = READ_TIMEOUT_MS
-            val clientIn = clientSocket.getInputStream()
+            val clientIn = java.io.BufferedInputStream(clientSocket.getInputStream(), 8192)
             val clientOut = clientSocket.getOutputStream()
 
             val headerLines = try {
@@ -309,16 +317,23 @@ class HttpProxyServer(
                 socket.sendBufferSize = 128 * 1024
                 socket.receiveBufferSize = 128 * 1024
 
+                if (upstream != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                    runCatching { upstream.bindSocket(socket) }
+                }
+
                 com.netfetch.app.network.NetfetchUpstreamRuntime.protect(socket)
 
+                val connectStart = android.os.SystemClock.elapsedRealtime()
                 socket.connect(
                     InetSocketAddress(address, port),
                     CONNECT_TIMEOUT_MS
                 )
+                val elapsed = android.os.SystemClock.elapsedRealtime() - connectStart
+                com.netfetch.app.network.NetfetchDiagnostics.recordTcpConnect(elapsed)
 
                 Log.d(
                     TAG,
-                    "Connected through upstream: $host/$address:$port"
+                    "Connected through upstream: $host/$address:$port in ${elapsed}ms"
                 )
 
                 return socket
@@ -564,24 +579,25 @@ class HttpProxyServer(
     }
 
     private fun pipeStreams(clientIp: String, input: InputStream, output: OutputStream, isUpload: Boolean) {
-        val buffer = ByteArray(32 * 1024)
-        try {
-            var read: Int
-            while (input.read(buffer).also { read = it } != -1) {
-                output.write(buffer, 0, read)
-                if (input.available() == 0) {
-                    output.flush()
-                }
-                recordBytes(clientIp, read.toLong(), isUpload)
+        com.netfetch.app.network.NetfetchBufferPool.useBuffer { buffer ->
+            try {
+                var read: Int
+                while (input.read(buffer).also { read = it } != -1) {
+                    output.write(buffer, 0, read)
+                    if (input.available() == 0) {
+                        output.flush()
+                    }
+                    recordBytes(clientIp, read.toLong(), isUpload)
 
-                // Anti-Jam Fairness: if multiple devices are active, yield CPU cooperatively during heavy transfers
-                if (connectedClientsMap.size > 1 && read > 16384) {
-                    Thread.yield()
+                    // Anti-Jam Fairness: if multiple devices are active, yield CPU cooperatively during heavy transfers
+                    if (connectedClientsMap.size > 1 && read > 16384) {
+                        Thread.yield()
+                    }
                 }
+                output.flush()
+            } catch (_: Exception) {
+                // Connection closed or idle timeout reached — clean termination
             }
-            output.flush()
-        } catch (_: Exception) {
-            // Connection closed or idle timeout reached — clean termination
         }
     }
 
@@ -610,6 +626,7 @@ class HttpProxyServer(
             clientUploadBytes.remove(clientIp)
             clientDownloadBytes.remove(clientIp)
             notifyClientsChanged()
+            com.netfetch.app.network.NetfetchDiagnostics.recordDisconnect("Client $clientIp disconnected")
         }
     }
 
@@ -676,6 +693,13 @@ class HttpProxyServer(
                 }
 
                 onBandwidthUpdate(upSpeed, downSpeed, currUp, currDown)
+                com.netfetch.app.network.NetfetchDiagnostics.recordThroughput(
+                    upSpeed = upSpeed,
+                    downSpeed = downSpeed,
+                    totalUp = currUp,
+                    totalDown = currDown,
+                    clientCount = connectedClientsMap.size
+                )
                 notifyClientsChanged()
             }
         }

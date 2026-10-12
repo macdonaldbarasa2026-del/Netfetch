@@ -69,7 +69,7 @@ class NetfetchLinkClient {
 
             writer.println("NETFETCH/1 REFRESH $token")
 
-            val response = reader.readLine()
+            val response = readBoundedLine(reader)
                 ?: throw IOException("Provider closed the refresh connection")
 
             if (response != "NETFETCH/1 REFRESHED") {
@@ -110,7 +110,7 @@ class NetfetchLinkClient {
 
             writer.println("NETFETCH/1 HELLO")
 
-            val status = reader.readLine()
+            val status = readBoundedLine(reader)
                 ?: throw IOException("Provider closed the link connection")
 
             if (status != "NETFETCH/1 OK") {
@@ -124,7 +124,7 @@ class NetfetchLinkClient {
             var socksPort = NetfetchLinkProtocol.DEFAULT_SOCKS_PORT
 
             while (true) {
-                val line = reader.readLine()
+                val line = readBoundedLine(reader)
                     ?: throw IOException("Incomplete NetFetch link response")
 
                 when {
@@ -198,5 +198,20 @@ class NetfetchLinkClient {
                 socksPort = socksPort
             )
         }
+    }
+
+    private fun readBoundedLine(reader: BufferedReader, maxChars: Int = 2048): String? {
+        val sb = StringBuilder()
+        while (sb.length < maxChars) {
+            val c = reader.read()
+            if (c == -1) {
+                return if (sb.isEmpty()) null else sb.toString()
+            }
+            if (c == '\n'.code) {
+                return sb.toString().trimEnd('\r')
+            }
+            sb.append(c.toChar())
+        }
+        throw IOException("Input line exceeded maximum allowed length of $maxChars characters")
     }
 }

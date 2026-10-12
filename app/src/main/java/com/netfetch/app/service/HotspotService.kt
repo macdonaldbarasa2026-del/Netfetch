@@ -117,6 +117,13 @@ class HotspotService : Service() {
         currentTotalUp = httpTotalUp + socksTotalUp
         currentTotalDown = httpTotalDown + socksTotalDown
         currentTotalTransferred = currentTotalUp + currentTotalDown
+        com.netfetch.app.network.NetfetchDiagnostics.recordThroughput(
+            upSpeed = currentUpSpeed,
+            downSpeed = currentDownSpeed,
+            totalUp = currentTotalUp,
+            totalDown = currentTotalDown,
+            clientCount = activeClients.size
+        )
         updateActiveState()
         updateNotification()
     }

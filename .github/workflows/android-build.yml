@@ -46,8 +46,8 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build Debug APK and Release AAB Bundle
-        run: ./gradlew assembleDebug bundleRelease --no-daemon --stacktrace
+      - name: Run Unit Tests and Build Artifacts
+        run: ./gradlew testDebugUnitTest assembleDebug bundleRelease --no-daemon --stacktrace
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4

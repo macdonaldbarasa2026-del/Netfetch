@@ -439,9 +439,13 @@ class NetfetchReceiverLink(
             NetfetchReceiverState.Reconnecting(reason)
         )
 
-        val retryDelay = (RECONNECT_DELAY_MS * (1L shl reconnectAttempts.coerceAtMost(4)))
+        val baseDelay = (RECONNECT_DELAY_MS * (1L shl reconnectAttempts.coerceAtMost(4)))
             .coerceAtMost(30_000L)
+        val jitterMultiplier = java.util.concurrent.ThreadLocalRandom.current().nextDouble(0.8, 1.2)
+        val retryDelay = (baseDelay * jitterMultiplier).toLong().coerceIn(1_000L, 30_000L)
         reconnectAttempts = (reconnectAttempts + 1).coerceAtMost(5)
+
+        com.netfetch.app.network.NetfetchDiagnostics.recordReconnectAttempt(reason)
 
         mainHandler.postDelayed(
             {

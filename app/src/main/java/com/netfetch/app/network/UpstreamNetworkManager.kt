@@ -455,23 +455,27 @@ class UpstreamNetworkManager(private val context: Context) {
         )
     }
 
+    private val pendingReselect = java.util.concurrent.atomic.AtomicBoolean(false)
+
     private fun requestReselect() {
         if (!started) return
 
         /*
-         * Do not cancel an active validation just because Android emitted
-         * another callback. Several callbacks can belong to the same
-         * connectivity transition.
-         *
-         * Keep one selection operation in flight at a time.
+         * Keep one selection operation in flight at a time. If an event
+         * occurs while selection is busy, record pendingReselect so a fresh
+         * pass executes immediately after the current one completes.
          */
         if (selectionJob?.isActive == true) {
+            pendingReselect.set(true)
             return
         }
 
         selectionJob = scope.launch {
             try {
-                reselect()
+                do {
+                    pendingReselect.set(false)
+                    reselect()
+                } while (pendingReselect.get() && started)
             } finally {
                 selectionJob = null
             }
@@ -802,6 +806,7 @@ class UpstreamNetworkManager(private val context: Context) {
         recoveryJob =
             scope.launch {
                 var attempt = 0
+                NetfetchDiagnostics.recordReconnectAttempt("Upstream recovery initiated")
 
                 while (
                     isActive &&
@@ -810,13 +815,17 @@ class UpstreamNetworkManager(private val context: Context) {
                 ) {
                     attempt++
 
-                    val delayMs =
+                    val baseDelayMs =
                         when (attempt) {
                             1 -> RECOVERY_DELAY_FIRST_MS
                             2 -> RECOVERY_DELAY_SECOND_MS
                             3 -> RECOVERY_DELAY_THIRD_MS
                             else -> RECOVERY_DELAY_LATER_MS
                         }
+
+                    // Randomized jitter (+/- 20%) protects against synchronized retry storms
+                    val jitterMultiplier = 0.8 + 0.4 * kotlin.random.Random.nextDouble()
+                    val delayMs = (baseDelayMs * jitterMultiplier).toLong()
 
                     delay(delayMs)
 
@@ -849,7 +858,8 @@ class UpstreamNetworkManager(private val context: Context) {
     private fun publishState(
         newState: UpstreamState
     ) {
-        if (newState == _upstreamState.value) {
+        val oldState = _upstreamState.value
+        if (newState == oldState) {
             return
         }
 
@@ -861,6 +871,17 @@ class UpstreamNetworkManager(private val context: Context) {
         )
 
         _upstreamState.value = newState
+
+        // Invalidate stale DNS records bound to the previous network interface
+        if (oldState.network != newState.network) {
+            NetfetchDnsEngine.invalidateOnNetworkChange(newState.network)
+        }
+
+        NetfetchDiagnostics.recordUpstreamState(
+            type = newState.type.name,
+            displayName = newState.displayName,
+            hasInternet = newState.hasInternet
+        )
     }
 
     private fun displayNameFor(

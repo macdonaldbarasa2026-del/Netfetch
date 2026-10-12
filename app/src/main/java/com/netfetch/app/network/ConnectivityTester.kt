@@ -1,6 +1,7 @@
 package com.netfetch.app.network
 
 import android.net.Network
+import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -8,47 +9,58 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Real Internet validation for a specific Android Network.
+ * Fast, Low-Latency Real Internet Validation for an Android Network.
  *
- * © 2026 Created by MacDonald | Powered by Mixfia
+ * Checks reachability without unnecessary TLS negotiation overhead where possible,
+ * using HTTP 204 endpoints with aggressive, bounded timeouts.
  */
 object ConnectivityTester {
 
     private const val TAG = "NetFetchConnTest"
 
-    private const val CONNECT_TIMEOUT_MS = 5_000
-    private const val READ_TIMEOUT_MS = 5_000
+    private const val CONNECT_TIMEOUT_MS = 2_500
+    private const val READ_TIMEOUT_MS = 2_500
 
     private val TEST_URLS = listOf(
         "http://connectivitycheck.gstatic.com/generate_204",
-        "https://connectivitycheck.gstatic.com/generate_204",
-        "https://www.google.com/generate_204",
+        "http://www.google.com/generate_204",
+        "http://www.msftconnecttest.com/connecttest.txt",
         "https://cp.cloudflare.com/",
-        "http://www.msftconnecttest.com/connecttest.txt"
+        "https://connectivitycheck.gstatic.com/generate_204"
     )
 
     suspend fun testConnectivity(network: Network?): Boolean =
         withContext(Dispatchers.IO) {
-            if (network == null) {
-                // If network is null, test system-level default connectivity
-                for (testUrl in TEST_URLS) {
-                    if (testHttpDirect(testUrl)) {
-                        Log.i(TAG, "Internet validated via default routing by $testUrl")
-                        return@withContext true
+            val startTime = SystemClock.elapsedRealtime()
+            var success = false
+
+            try {
+                if (network == null) {
+                    for (testUrl in TEST_URLS) {
+                        if (testHttpDirect(testUrl)) {
+                            success = true
+                            Log.i(TAG, "Internet validated via default routing by $testUrl")
+                            break
+                        }
+                    }
+                } else {
+                    for (testUrl in TEST_URLS) {
+                        if (testHttp(network, testUrl)) {
+                            success = true
+                            Log.i(TAG, "Internet validated on network $network by $testUrl")
+                            break
+                        }
                     }
                 }
-                return@withContext false
+            } finally {
+                val duration = SystemClock.elapsedRealtime() - startTime
+                NetfetchDiagnostics.recordReachabilityProbe(duration, success)
             }
 
-            for (testUrl in TEST_URLS) {
-                if (testHttp(network, testUrl)) {
-                    Log.i(TAG, "Internet validated on network $network by $testUrl")
-                    return@withContext true
-                }
+            if (!success) {
+                Log.w(TAG, "All Internet validation probes failed: $network")
             }
-
-            Log.w(TAG, "All Internet validation probes failed: $network")
-            false
+            success
         }
 
     private fun testHttp(
@@ -65,11 +77,11 @@ object ConnectivityTester {
                 requestMethod = "GET"
                 connectTimeout = CONNECT_TIMEOUT_MS
                 readTimeout = READ_TIMEOUT_MS
-                instanceFollowRedirects = true
+                instanceFollowRedirects = false
                 useCaches = false
                 doInput = true
                 setRequestProperty("Connection", "close")
-                setRequestProperty("User-Agent", "Mozilla/5.0 NetFetch/1.0")
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Android; NetFetch/1.0)")
             }
 
             val response = connection.responseCode
@@ -100,11 +112,11 @@ object ConnectivityTester {
                 requestMethod = "GET"
                 connectTimeout = CONNECT_TIMEOUT_MS
                 readTimeout = READ_TIMEOUT_MS
-                instanceFollowRedirects = true
+                instanceFollowRedirects = false
                 useCaches = false
                 doInput = true
                 setRequestProperty("Connection", "close")
-                setRequestProperty("User-Agent", "Mozilla/5.0 NetFetch/1.0")
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Android; NetFetch/1.0)")
             }
             val response = connection.responseCode
             response in 200..399 || response == HttpURLConnection.HTTP_NO_CONTENT
@@ -115,7 +127,3 @@ object ConnectivityTester {
         }
     }
 }
-
-/*
- * © 2026 Created by MacDonald | Powered by Mixfia
- */

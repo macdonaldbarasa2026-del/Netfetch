@@ -132,7 +132,7 @@ class NetfetchLinkServer(
                     true
                 )
 
-                val firstLine = reader.readLine()
+                val firstLine = readBoundedLine(reader)
                     ?: run {
                         writer.println("NETFETCH/1 ERROR Empty request")
                         return
@@ -254,5 +254,20 @@ class NetfetchLinkServer(
         listenerThread = null
 
         handlerPool.shutdownNow()
+    }
+
+    private fun readBoundedLine(reader: BufferedReader, maxChars: Int = 2048): String? {
+        val sb = StringBuilder()
+        while (sb.length < maxChars) {
+            val c = reader.read()
+            if (c == -1) {
+                return if (sb.isEmpty()) null else sb.toString()
+            }
+            if (c == '\n'.code) {
+                return sb.toString().trimEnd('\r')
+            }
+            sb.append(c.toChar())
+        }
+        throw java.io.IOException("Input line exceeded maximum allowed length of $maxChars characters")
     }
 }
