@@ -17,10 +17,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -46,9 +47,11 @@ import com.netfetch.app.ui.screens.HelpScreen
 import com.netfetch.app.ui.screens.HomeScreen
 import com.netfetch.app.ui.screens.ProxyConfigScreen
 import com.netfetch.app.ui.screens.SettingsScreen
+import com.netfetch.app.ui.theme.CardWhite
 import com.netfetch.app.ui.theme.CreamBackground
 import com.netfetch.app.ui.theme.NetFetchTheme
 import com.netfetch.app.ui.theme.PrimaryBlack
+import com.netfetch.app.ui.theme.SurfaceBorder
 import com.netfetch.app.ui.theme.TextMuted
 
 class MainActivity : ComponentActivity() {
@@ -107,6 +110,8 @@ class MainActivity : ComponentActivity() {
     private var receiverLink: NetfetchReceiverLink? = null
     private var pendingReceiverConnection:
         NetfetchReceiverState.Connected? = null
+    private var pendingDirectHost: String? = null
+    private var pendingDirectPort: Int = 1080
 
     private val hotspotStateFlow = mutableStateOf<HotspotState>(HotspotState.Idle)
     private var pendingHotspotConfig: HotspotConfig? = null
@@ -133,6 +138,15 @@ class MainActivity : ComponentActivity() {
 
             if (result.resultCode == RESULT_OK && connection != null) {
                 startReceiverVpn(connection)
+            } else if (result.resultCode == RESULT_OK && connection == null) {
+                val directHost = pendingDirectHost
+                val directPort = pendingDirectPort
+                pendingDirectHost = null
+                if (!directHost.isNullOrBlank()) {
+                    executeDirectConnect(directHost, directPort)
+                } else {
+                    startReceiverDiscovery()
+                }
             } else if (connection != null) {
                 receiverStateFlow.value =
                     NetfetchReceiverState.Error(
@@ -176,11 +190,18 @@ class MainActivity : ComponentActivity() {
     ) { permissions ->
         val allGranted = permissions.entries.all { it.value }
         if (allGranted) {
-            checkVpnAndStartReceiver()
+            val directHost = pendingDirectHost
+            val directPort = pendingDirectPort
+            if (!directHost.isNullOrBlank()) {
+                pendingDirectHost = null
+                executeDirectConnect(directHost, directPort)
+            } else {
+                checkVpnAndStartReceiver()
+            }
         } else {
             android.widget.Toast.makeText(
                 this,
-                "Wi-Fi & Nearby device permissions are required to scan for NetFetch providers.",
+                "Wi-Fi & Network permissions are required to connect to NetFetch.",
                 android.widget.Toast.LENGTH_SHORT
             ).show()
         }
@@ -243,6 +264,7 @@ class MainActivity : ComponentActivity() {
 
                 val state by hotspotStateFlow
                 var config by configStateFlow
+                val receiverState by receiverStateFlow
 
                 Scaffold(
                     bottomBar = {
@@ -250,73 +272,85 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(CreamBackground)
+                                .navigationBarsPadding()
+                                .padding(start = 16.dp, end = 16.dp, bottom = 12.dp, top = 4.dp)
                         ) {
-                            NavigationBar(
-                                windowInsets = WindowInsets.navigationBars,
-                                containerColor = CreamBackground,
-                            contentColor = PrimaryBlack
-                        ) {
-                            NavigationBarItem(
-                                selected = currentRoute == "home",
-                                onClick = { navController.navigate("home") { popUpTo("home") { inclusive = true } } },
-                                icon = { Icon(Icons.Default.WifiTethering, contentDescription = "Home") },
-                                label = { Text("Home") },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = PrimaryBlack,
-                                    selectedTextColor = PrimaryBlack,
-                                    indicatorColor = PrimaryBlack.copy(alpha = 0.1f),
-                                    unselectedIconColor = TextMuted,
-                                    unselectedTextColor = TextMuted
-                                )
-                            )
-                            NavigationBarItem(
-                                selected = currentRoute == "devices",
-                                onClick = { navController.navigate("devices") },
-                                icon = {
-                                    val count = if (state is HotspotState.Active) (state as HotspotState.Active).connectedClients.size else 0
-                                    BadgedBox(badge = { if (count > 0) Badge { Text("$count") } }) {
-                                        Icon(Icons.Default.Devices, contentDescription = "Devices")
-                                    }
-                                },
-                                label = { Text("Devices") },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = PrimaryBlack,
-                                    selectedTextColor = PrimaryBlack,
-                                    indicatorColor = PrimaryBlack.copy(alpha = 0.1f),
-                                    unselectedIconColor = TextMuted,
-                                    unselectedTextColor = TextMuted
-                                )
-                            )
-                            NavigationBarItem(
-                                selected = currentRoute == "settings",
-                                onClick = { navController.navigate("settings") },
-                                icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
-                                label = { Text("Settings") },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = PrimaryBlack,
-                                    selectedTextColor = PrimaryBlack,
-                                    indicatorColor = PrimaryBlack.copy(alpha = 0.1f),
-                                    unselectedIconColor = TextMuted,
-                                    unselectedTextColor = TextMuted
-                                )
-                            )
-                            NavigationBarItem(
-                                selected = currentRoute == "help",
-                                onClick = { navController.navigate("help") },
-                                icon = { Icon(Icons.Default.HelpOutline, contentDescription = "Help") },
-                                label = { Text("Help") },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = PrimaryBlack,
-                                    selectedTextColor = PrimaryBlack,
-                                    indicatorColor = PrimaryBlack.copy(alpha = 0.1f),
-                                    unselectedIconColor = TextMuted,
-                                    unselectedTextColor = TextMuted
-                                )
-                            )
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(22.dp),
+                                shadowElevation = 10.dp,
+                                tonalElevation = 2.dp,
+                                color = CardWhite,
+                                border = BorderStroke(1.dp, SurfaceBorder)
+                            ) {
+                                NavigationBar(
+                                    windowInsets = WindowInsets(0, 0, 0, 0),
+                                    containerColor = CardWhite,
+                                    contentColor = PrimaryBlack,
+                                    modifier = Modifier.height(64.dp)
+                                ) {
+                                    NavigationBarItem(
+                                        selected = currentRoute == "home",
+                                        onClick = { navController.navigate("home") { popUpTo("home") { inclusive = true } } },
+                                        icon = { Icon(Icons.Default.WifiTethering, contentDescription = "Home") },
+                                        label = { Text("Home", fontWeight = if (currentRoute == "home") androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal) },
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = PrimaryBlack,
+                                            selectedTextColor = PrimaryBlack,
+                                            indicatorColor = PrimaryBlack.copy(alpha = 0.12f),
+                                            unselectedIconColor = TextMuted,
+                                            unselectedTextColor = TextMuted
+                                        )
+                                    )
+                                    NavigationBarItem(
+                                        selected = currentRoute == "devices",
+                                        onClick = { navController.navigate("devices") },
+                                        icon = {
+                                            val count = if (state is HotspotState.Active) (state as HotspotState.Active).connectedClients.size else 0
+                                            BadgedBox(badge = { if (count > 0) Badge { Text("$count") } }) {
+                                                Icon(Icons.Default.Devices, contentDescription = "Devices")
+                                            }
+                                        },
+                                        label = { Text("Devices", fontWeight = if (currentRoute == "devices") androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal) },
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = PrimaryBlack,
+                                            selectedTextColor = PrimaryBlack,
+                                            indicatorColor = PrimaryBlack.copy(alpha = 0.12f),
+                                            unselectedIconColor = TextMuted,
+                                            unselectedTextColor = TextMuted
+                                        )
+                                    )
+                                    NavigationBarItem(
+                                        selected = currentRoute == "settings",
+                                        onClick = { navController.navigate("settings") },
+                                        icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
+                                        label = { Text("Settings", fontWeight = if (currentRoute == "settings") androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal) },
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = PrimaryBlack,
+                                            selectedTextColor = PrimaryBlack,
+                                            indicatorColor = PrimaryBlack.copy(alpha = 0.12f),
+                                            unselectedIconColor = TextMuted,
+                                            unselectedTextColor = TextMuted
+                                        )
+                                    )
+                                    NavigationBarItem(
+                                        selected = currentRoute == "help",
+                                        onClick = { navController.navigate("help") },
+                                        icon = { Icon(Icons.Default.Help, contentDescription = "Help") },
+                                        label = { Text("Help", fontWeight = if (currentRoute == "help") androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal) },
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = PrimaryBlack,
+                                            selectedTextColor = PrimaryBlack,
+                                            indicatorColor = PrimaryBlack.copy(alpha = 0.12f),
+                                            unselectedIconColor = TextMuted,
+                                            unselectedTextColor = TextMuted
+                                        )
+                                    )
+                                }
+                            }
                         }
                     }
-                }
-            ) { innerPadding ->
+                ) { innerPadding ->
                     NavHost(
                         navController = navController,
                         startDestination = "home",
@@ -353,9 +387,11 @@ class MainActivity : ComponentActivity() {
                                         startHotspotService(config)
                                     }
                                 },
-                                receiverState = receiverStateFlow.value,
+                                receiverState = receiverState,
                                 onStartReceiver = { checkPermissionsAndStartReceiver() },
                                 onStopReceiver = { stopReceiverConnection() },
+                                onDirectConnectReceiver = { host, port -> checkPermissionsAndStartDirectReceiver(host, port) },
+                                onTestReceiverConnectivity = { onResult -> testReceiverInternet(onResult) },
                                 onNavigateToDevices = { navController.navigate("devices") },
                                 onNavigateToProxyConfig = { navController.navigate("proxy_config") }
                             )
@@ -528,6 +564,69 @@ class MainActivity : ComponentActivity() {
 
         pendingReceiverConnection = null
         receiverStateFlow.value = NetfetchReceiverState.Idle
+    }
+
+    private fun checkPermissionsAndStartDirectReceiver(host: String, port: Int) {
+        val requiredPermissions = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            requiredPermissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        val missing = requiredPermissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (missing.isNotEmpty()) {
+            pendingDirectHost = host
+            pendingDirectPort = port
+            requestReceiverPermissionLauncher.launch(missing.toTypedArray())
+        } else {
+            if (configStateFlow.value.mode == TetherMode.PRO) {
+                val vpnIntent = VpnService.prepare(this)
+                if (vpnIntent != null) {
+                    pendingDirectHost = host
+                    pendingDirectPort = port
+                    receiverVpnPermissionLauncher.launch(vpnIntent)
+                    return
+                }
+            }
+            executeDirectConnect(host, port)
+        }
+    }
+
+    private fun executeDirectConnect(host: String, port: Int) {
+        receiverLink?.stop()
+        receiverLink?.connectDirect(gatewayIp = host, socksPort = port)
+    }
+
+    private fun testReceiverInternet(onResult: (Boolean, Long, String) -> Unit) {
+        Thread(
+            {
+                val startTime = System.currentTimeMillis()
+                try {
+                    val url = java.net.URL("http://connectivitycheck.gstatic.com/generate_204")
+                    val conn = url.openConnection() as java.net.HttpURLConnection
+                    conn.connectTimeout = 4000
+                    conn.readTimeout = 4000
+                    conn.instanceFollowRedirects = false
+                    val responseCode = conn.responseCode
+                    val latency = System.currentTimeMillis() - startTime
+                    conn.disconnect()
+                    runOnUiThread {
+                        if (responseCode == 204 || responseCode in 200..399) {
+                            onResult(true, latency, "Internet Connected via NetFetch ($latency ms)")
+                        } else {
+                            onResult(false, latency, "HTTP Gateway responded with code $responseCode")
+                        }
+                    }
+                } catch (e: Exception) {
+                    val latency = System.currentTimeMillis() - startTime
+                    runOnUiThread {
+                        onResult(false, latency, e.message ?: "Ping timed out")
+                    }
+                }
+            },
+            "NetFetch-ReceiverPing"
+        ).apply { isDaemon = true }.start()
     }
 
     private fun stopReceiverVpn() {

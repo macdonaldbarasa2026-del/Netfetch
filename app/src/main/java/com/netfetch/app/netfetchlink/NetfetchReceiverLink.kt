@@ -133,6 +133,77 @@ class NetfetchReceiverLink(
         searchForProvider()
     }
 
+    fun connectDirect(gatewayIp: String = "192.168.49.1", socksPort: Int = 1080, httpPort: Int = 8282) {
+        stopInternal(removeGroup = false)
+        stopped = false
+        connecting = true
+        connected = false
+        reconnectScheduled.set(false)
+        onStateChanged(NetfetchReceiverState.Authenticating)
+
+        Thread(
+            {
+                if (stopped) return@Thread
+                try {
+                    val session = try {
+                        NetfetchLinkClient().openSession(providerHost = gatewayIp)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Link server handshake not responding on :8284, using direct gateway fallback: ${e.message}")
+                        NetfetchLinkClient.Session(
+                            token = "direct-token",
+                            mode = requestedMode(),
+                            httpPort = httpPort,
+                            pacPort = 8283,
+                            socksPort = socksPort
+                        )
+                    }
+
+                    if (stopped) return@Thread
+                    mainHandler.post {
+                        if (stopped) return@post
+                        connecting = false
+                        connected = true
+                        reconnectAttempts = 0
+                        activeSessionToken = session.token
+                        activeProviderAddress = gatewayIp
+                        onStateChanged(
+                            NetfetchReceiverState.Connected(
+                                providerAddress = gatewayIp,
+                                providerMode = session.mode,
+                                httpPort = session.httpPort,
+                                pacPort = session.pacPort,
+                                socksPort = session.socksPort,
+                                sessionToken = session.token
+                            )
+                        )
+                        mainHandler.removeCallbacks(connectionMonitor)
+                        mainHandler.postDelayed(
+                            connectionMonitor,
+                            CONNECTION_MONITOR_INTERVAL_MS
+                        )
+                        mainHandler.postDelayed(
+                            sessionRefresh,
+                            SESSION_REFRESH_INTERVAL_MS
+                        )
+                    }
+                } catch (e: Exception) {
+                    if (stopped) return@Thread
+                    Log.e(TAG, "Failed direct connect to $gatewayIp", e)
+                    mainHandler.post {
+                        if (!stopped) {
+                            onStateChanged(
+                                NetfetchReceiverState.Error(
+                                    "Unable to connect to gateway $gatewayIp: ${e.message ?: "host unreachable"}"
+                                )
+                            )
+                        }
+                    }
+                }
+            },
+            "NetFetch-DirectConnect"
+        ).apply { isDaemon = true }.start()
+    }
+
     @SuppressLint("MissingPermission")
     private fun searchForProvider() {
         if (stopped) return

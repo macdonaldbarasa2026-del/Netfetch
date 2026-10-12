@@ -134,14 +134,15 @@ fun HelpScreen(config: HotspotConfig) {
         Spacer(modifier = Modifier.height(10.dp))
 
         DeviceGuideAccordion(
-            title = "Android Phones & Tablets",
+            title = "Android Phones & Tablets (NetFetch Connect)",
             icon = Icons.Default.Android,
             steps = listOf(
-                "Connect to Wi-Fi '${config.ssid}'.",
+                "Fastest method: Open NetFetch on the client Android phone and tap 'Connect' in the 'NetFetch Connect (Android)' card on the Home screen to connect automatically with zero manual setup.",
+                "Or manually connect to Wi-Fi '${config.ssid}' with password '${config.passphrase}'.",
                 "Tap the gear icon next to the Wi-Fi network > Advanced.",
                 "Set Proxy to 'Manual'.",
                 "Proxy hostname: ${config.hostIp} | Proxy port: ${config.proxyPort}.",
-                "Tap Save."
+                "Tap Save to begin browsing at high speed."
             )
         )
 
@@ -156,6 +157,21 @@ fun HelpScreen(config: HotspotConfig) {
                 "When prompted for Proxy Server, select 'Use'.",
                 "Address: ${config.hostIp} | Port: ${config.proxyPort}.",
                 "Complete connection test."
+            )
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        DeviceGuideAccordion(
+            title = "CMD / PowerShell / Bash Terminal Usage",
+            icon = Icons.Default.Terminal,
+            steps = listOf(
+                "Windows CMD: set http_proxy=http://${config.hostIp}:${config.proxyPort} && set https_proxy=http://${config.hostIp}:${config.proxyPort}",
+                "PowerShell: \$env:http_proxy=\"http://${config.hostIp}:${config.proxyPort}\"; \$env:https_proxy=\"http://${config.hostIp}:${config.proxyPort}\"",
+                "Linux/macOS Bash: export http_proxy=\"http://${config.hostIp}:${config.proxyPort}\" && export https_proxy=\"http://${config.hostIp}:${config.proxyPort}\"",
+                "cURL command: curl -x http://${config.hostIp}:${config.proxyPort} https://google.com",
+                "Git CLI proxy: git config --global http.proxy http://${config.hostIp}:${config.proxyPort}",
+                "Steam Deck/Gaming SOCKS5: tun2socks -device tun0 -proxy socks5://${config.hostIp}:${config.socksPort}"
             )
         )
 
@@ -218,7 +234,7 @@ fun HelpScreen(config: HotspotConfig) {
             )
         }
 
-        Spacer(modifier = Modifier.height(28.dp))
+        Spacer(modifier = Modifier.height(64.dp))
     }
 }
 

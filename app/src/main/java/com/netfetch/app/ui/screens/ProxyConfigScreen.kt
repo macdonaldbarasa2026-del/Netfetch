@@ -568,7 +568,7 @@ fun ProxyConfigScreen(
                 Text("Reset to Defaults", color = PrimaryBlack, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(64.dp))
         }
     }
 }

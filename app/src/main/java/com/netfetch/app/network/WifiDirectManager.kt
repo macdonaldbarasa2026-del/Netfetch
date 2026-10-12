@@ -1,6 +1,7 @@
 package com.netfetch.app.network
 
 import android.annotation.SuppressLint
+import androidx.annotation.RequiresApi
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -127,6 +128,7 @@ class WifiDirectManager(
         fallbackCreateGroup(config, effectiveBand)
     }
 
+    @RequiresApi(Build.VERSION_CODES.Q)
     @SuppressLint("MissingPermission")
     private fun createGroupWithBuilder(config: HotspotConfig, band: BandPreference) {
         // Android 10+ requires SSID to start with DIRECT-
