@@ -8,7 +8,11 @@ import java.net.Socket
 class NetfetchTcpSessionManagerTest {
 
     private val dummyConnector = object : NetfetchConnector {
-        override suspend fun connectTcp(destination: InetAddress, port: Int): Socket {
+        override fun connectTcp(destination: InetAddress, port: Int, timeoutMs: Int): Socket {
+            throw UnsupportedOperationException("Dummy connector")
+        }
+
+        override fun openUdp(): java.net.DatagramSocket {
             throw UnsupportedOperationException("Dummy connector")
         }
     }
