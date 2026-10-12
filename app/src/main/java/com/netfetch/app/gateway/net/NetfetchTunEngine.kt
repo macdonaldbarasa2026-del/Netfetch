@@ -31,7 +31,7 @@ class NetfetchTunEngine(
      * TUN writer is temporarily behind.
      */
     private val writeQueue =
-        java.util.concurrent.ArrayBlockingQueue<ByteArray>(512)
+        java.util.concurrent.ArrayBlockingQueue<ByteArray>(2048)
 
     private val tcpEngine =
         NetfetchTcpEngine(
@@ -46,7 +46,7 @@ class NetfetchTunEngine(
         )
 
     private val dnsExecutor =
-        java.util.concurrent.Executors.newFixedThreadPool(8) { r ->
+        java.util.concurrent.Executors.newFixedThreadPool(16) { r ->
             Thread(r, "Netfetch-DnsResolver").apply { isDaemon = true }
         }
 

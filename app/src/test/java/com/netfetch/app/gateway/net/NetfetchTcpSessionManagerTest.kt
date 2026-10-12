@@ -45,4 +45,19 @@ class NetfetchTcpSessionManagerTest {
         manager.close(key)
         manager.closeAll()
     }
+
+    @Test
+    fun testAvailableReceiveWindowDefaultWhenNoSession() {
+        val manager = NetfetchTcpSessionManager(dummyConnector)
+        val key = TcpFlowKey(
+            sourceIp = 0x7f000001,
+            sourcePort = 9999,
+            destinationIp = 0x7f000001,
+            destinationPort = 8080
+        )
+        val window = manager.availableReceiveWindow(key)
+        org.junit.Assert.assertEquals(65_535, window)
+        org.junit.Assert.assertFalse(manager.isConnecting(key))
+        manager.closeAll()
+    }
 }

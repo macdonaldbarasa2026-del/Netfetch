@@ -36,10 +36,11 @@ class HttpProxyServer(
     private val TAG = "NetFetchProxy"
     private var serverSocket: ServerSocket? = null
     @Volatile private var isRunning = false
+    private var acceptThread: Thread? = null
     private val proxyThreadCounter = AtomicLong(0L)
     private val proxyExecutor = java.util.concurrent.ThreadPoolExecutor(
         4,
-        64,
+        128,
         60L,
         java.util.concurrent.TimeUnit.SECONDS,
         java.util.concurrent.SynchronousQueue(),
@@ -82,7 +83,9 @@ class HttpProxyServer(
         if (isRunning) return
         isRunning = true
 
-        proxyScope.launch {
+        startSpeedMonitor()
+
+        acceptThread = Thread({
             try {
                 serverSocket = ServerSocket().apply {
                     reuseAddress = true
@@ -90,11 +93,9 @@ class HttpProxyServer(
                 }
                 Log.i(TAG, "NetFetch HTTP Proxy listening on port $port (Anti-Jam Fair Share Active)")
 
-                startSpeedMonitor()
-
-                while (isRunning && !serverSocket!!.isClosed) {
+                while (isRunning && serverSocket?.isClosed == false) {
                     try {
-                        val clientSocket = serverSocket!!.accept()
+                        val clientSocket = serverSocket?.accept() ?: break
                         if (!clientSemaphore.tryAcquire()) {
                             Log.w(TAG, "HTTP proxy client concurrency limit reached; rejecting connection")
                             runCatching { clientSocket.close() }
@@ -114,8 +115,13 @@ class HttpProxyServer(
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Fatal proxy server startup error: ${e.message}", e)
+                if (isRunning) {
+                    Log.e(TAG, "Fatal proxy server startup error: ${e.message}", e)
+                }
             }
+        }, "NetFetch-HttpAccept").apply {
+            isDaemon = true
+            start()
         }
     }
 
@@ -713,6 +719,8 @@ class HttpProxyServer(
         } catch (e: Exception) {
             Log.e(TAG, "Error closing server socket: ${e.message}")
         }
+        acceptThread?.interrupt()
+        acceptThread = null
         proxyScope.cancel()
         runCatching { proxyExecutor.shutdownNow() }
         connectedClientsMap.clear()

@@ -37,7 +37,7 @@ class NetfetchTcpEngine(
         const val IDLE_TIMEOUT_MS = 90_000L
         const val HALF_CLOSED_TIMEOUT_MS = 15_000L
         const val MAX_FLOWS = 2048
-        const val HOUSEKEEPING_MS = 1_000L
+        const val HOUSEKEEPING_MS = 100L
 
         const val TCP_FIN = TcpHeader.FIN
         const val TCP_SYN = TcpHeader.SYN
@@ -62,18 +62,22 @@ class NetfetchTcpEngine(
 
         var clientWindow: Int = RECEIVE_WINDOW,
 
+        var synSent: Boolean = false,
         var synAcknowledged: Boolean = false,
         var clientFinReceived: Boolean = false,
         var serverFinSent: Boolean = false,
         var closed: Boolean = false,
 
         var lastActivityAt: Long = System.currentTimeMillis(),
+        var lastAckReceived: Long = 0L,
+        var duplicateAckCount: Int = 0,
 
         val unacknowledged: java.util.ArrayDeque<Segment> =
             java.util.ArrayDeque(),
 
         var unacknowledgedBytes: Int = 0,
-        var pendingUpstreamData: ByteArray? = null
+        var pendingUpstreamData: ByteArray? = null,
+        var pendingClientPayload: ByteArray? = null
     )
 
     private val flows = ConcurrentHashMap<TcpFlowKey, Flow>()
@@ -217,7 +221,7 @@ class NetfetchTcpEngine(
         if (existing != null) {
             existing.lastActivityAt = System.currentTimeMillis()
 
-            if (!existing.synAcknowledged) {
+            if (existing.synSent && !existing.synAcknowledged) {
                 resendSynAckLocked(existing)
             }
 
@@ -280,9 +284,17 @@ class NetfetchTcpEngine(
                         return@synchronized
                     }
 
+                    connectedFlow.synSent = true
                     sendSynAckLocked(
                         connectedFlow
                     )
+
+                    // Forward early client payload buffered while upstream was connecting
+                    val earlyPayload = connectedFlow.pendingClientPayload
+                    if (earlyPayload != null) {
+                        connectedFlow.pendingClientPayload = null
+                        sessions.write(sessionKey, earlyPayload)
+                    }
                 }
             },
 
@@ -370,6 +382,22 @@ class NetfetchTcpEngine(
 
         if (payload.size > flow.clientWindow.coerceAtLeast(0)) {
             sendAckLocked(flow)
+            return
+        }
+
+        if (!flow.synSent) {
+            // Upstream connection is still in flight; buffer early payload rather than sending RST
+            val existing = flow.pendingClientPayload
+            flow.pendingClientPayload = if (existing == null) {
+                payload
+            } else {
+                val combined = ByteArray(existing.size + payload.size)
+                System.arraycopy(existing, 0, combined, 0, existing.size)
+                System.arraycopy(payload, 0, combined, existing.size, payload.size)
+                combined
+            }
+            flow.nextClientSequence += payload.size
+            flow.lastActivityAt = System.currentTimeMillis()
             return
         }
 
@@ -590,6 +618,21 @@ class NetfetchTcpEngine(
             return
         }
 
+        // Fast Retransmit (RFC 5681): 3 duplicate ACKs trigger immediate retransmission of missing segment
+        if (acknowledgement == flow.lastAckReceived && flow.unacknowledged.isNotEmpty()) {
+            flow.duplicateAckCount++
+            if (flow.duplicateAckCount == 3) {
+                val headSegment = flow.unacknowledged.peekFirst()
+                if (headSegment != null) {
+                    writer(headSegment.packet)
+                    headSegment.lastSentAt = System.currentTimeMillis()
+                }
+            }
+        } else if (acknowledgement > flow.lastAckReceived) {
+            flow.lastAckReceived = acknowledgement
+            flow.duplicateAckCount = 0
+        }
+
         while (true) {
             val segment =
                 flow.unacknowledged.peekFirst()
@@ -697,6 +740,9 @@ class NetfetchTcpEngine(
     private fun sendAckLocked(
         flow: Flow
     ) {
+        val window = sessions.availableReceiveWindow(flow.key)
+            .coerceIn(0, RECEIVE_WINDOW)
+
         writer(
             PacketCodec.ipv4Tcp(
                 sourceIp = flow.key.destinationIp,
@@ -706,10 +752,7 @@ class NetfetchTcpEngine(
                 sequence = flow.nextServerSequence,
                 acknowledgement = flow.nextClientSequence,
                 flags = TCP_ACK,
-                window =
-                    RECEIVE_WINDOW -
-                        flow.unacknowledgedBytes
-                            .coerceIn(0, RECEIVE_WINDOW)
+                window = window
             )
         )
     }

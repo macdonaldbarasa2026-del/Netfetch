@@ -55,6 +55,7 @@ class NetfetchReceiverConnector(
     }
 
     private val dnsCache = java.util.concurrent.ConcurrentHashMap<Int, Pair<Long, ByteArray>>()
+    private val negativeCache = java.util.concurrent.ConcurrentHashMap<Int, Long>()
 
     override fun resolveDns(
         destination: InetAddress,
@@ -66,9 +67,15 @@ class NetfetchReceiverConnector(
             java.util.Arrays.hashCode(queryData.copyOfRange(2, queryData.size))
         } else 0
 
+        val now = System.currentTimeMillis()
         if (cacheKey != 0) {
+            val negExpiry = negativeCache[cacheKey]
+            if (negExpiry != null && now < negExpiry) {
+                return null
+            }
+
             val cached = dnsCache[cacheKey]
-            if (cached != null && System.currentTimeMillis() < cached.first) {
+            if (cached != null && now < cached.first) {
                 val resp = cached.second.copyOf()
                 resp[0] = queryData[0]
                 resp[1] = queryData[1]
@@ -77,16 +84,26 @@ class NetfetchReceiverConnector(
         }
 
         val targetDns = destination.hostAddress ?: "1.1.1.1"
-        val response = queryDnsOverTcp(targetDns, queryData)
-            ?: queryDnsOverTcp("1.1.1.1", queryData)
-            ?: queryDnsOverTcp("8.8.8.8", queryData)
+        val serversToTry = buildList {
+            add(targetDns)
+            if (targetDns != "1.1.1.1") add("1.1.1.1")
+            if (targetDns != "8.8.8.8") add("8.8.8.8")
+        }
+
+        var response: ByteArray? = null
+        for (server in serversToTry) {
+            response = queryDnsOverTcp(server, queryData)
+            if (response != null) break
+        }
 
         if (response != null && cacheKey != 0) {
             if (dnsCache.size > 1000) {
-                val now = System.currentTimeMillis()
                 dnsCache.entries.removeIf { it.value.first <= now }
             }
-            dnsCache[cacheKey] = Pair(System.currentTimeMillis() + 600_000L, response)
+            dnsCache[cacheKey] = Pair(now + 600_000L, response)
+            negativeCache.remove(cacheKey)
+        } else if (response == null && cacheKey != 0) {
+            negativeCache[cacheKey] = now + 5_000L
         }
 
         return response
@@ -103,7 +120,7 @@ class NetfetchReceiverConnector(
                 destinationHost = dnsServerIp,
                 destinationPort = 53
             )
-            socket.soTimeout = 4000
+            socket.soTimeout = 2000
             val out = socket.getOutputStream()
             out.write((queryData.size shr 8) and 0xFF)
             out.write(queryData.size and 0xFF)

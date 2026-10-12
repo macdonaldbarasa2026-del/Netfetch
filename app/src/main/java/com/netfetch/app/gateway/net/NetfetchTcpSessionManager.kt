@@ -27,15 +27,14 @@ class NetfetchTcpSessionManager(
 ) {
 
     private companion object {
-        const val WRITE_QUEUE_CAPACITY = 64
+        const val WRITE_QUEUE_CAPACITY = 256
         const val SOCKET_BUFFER_SIZE = 256 * 1024
         /**
-         * How long write() waits for a slot in the write queue when it is
-         * momentarily full before giving up and closing the stalled session.
-         * 50 ms absorbs micro-bursts; a consistently-full queue indicates
-         * a genuinely stuck upstream socket.
+         * Micro-wait bound when write queue is momentarily full.
+         * Must remain tiny (<=1ms) so the TUN packet processing thread
+         * is never blocked under lock.
          */
-        const val WRITE_OFFER_TIMEOUT_MS = 15L
+        const val WRITE_OFFER_TIMEOUT_MS = 1L
     }
 
     private class Session(
@@ -319,4 +318,13 @@ class NetfetchTcpSessionManager(
 
     fun count(): Int =
         sessions.size
+
+    fun isConnecting(key: TcpFlowKey): Boolean =
+        connecting.containsKey(key)
+
+    fun availableReceiveWindow(key: TcpFlowKey): Int {
+        val session = sessions[key] ?: return 65_535
+        val remaining = session.writeQueue.remainingCapacity()
+        return (remaining * 1460).coerceIn(0, 65_535)
+    }
 }

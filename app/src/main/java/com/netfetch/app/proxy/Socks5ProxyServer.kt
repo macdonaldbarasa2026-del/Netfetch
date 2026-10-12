@@ -38,10 +38,11 @@ class Socks5ProxyServer(
     private val TAG = "NetFetchSocks5"
     private var serverSocket: ServerSocket? = null
     @Volatile private var isRunning = false
+    private var acceptThread: Thread? = null
     private val socksThreadCounter = AtomicLong(0L)
     private val socksExecutor = java.util.concurrent.ThreadPoolExecutor(
         4,
-        64,
+        128,
         60L,
         java.util.concurrent.TimeUnit.SECONDS,
         java.util.concurrent.SynchronousQueue(),
@@ -93,7 +94,7 @@ class Socks5ProxyServer(
 
         startSpeedMonitor()
 
-        proxyScope.launch {
+        acceptThread = Thread({
             try {
                 serverSocket = ServerSocket().apply {
                     reuseAddress = true
@@ -101,9 +102,9 @@ class Socks5ProxyServer(
                 }
                 Log.i(TAG, "NetFetch SOCKS5 Server listening on port $socksPort (Anti-Jam Fair Share Active)")
 
-                while (isRunning && !serverSocket!!.isClosed) {
+                while (isRunning && serverSocket?.isClosed == false) {
                     try {
-                        val client = serverSocket!!.accept()
+                        val client = serverSocket?.accept() ?: break
                         proxyScope.launch {
                             if (!clientSemaphore.tryAcquire()) {
                                 Log.w(TAG, "SOCKS5 client concurrency limit reached; rejecting connection")
@@ -121,8 +122,11 @@ class Socks5ProxyServer(
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "SOCKS5 Proxy Server failed to start: ${e.message}")
+                if (isRunning) Log.e(TAG, "SOCKS5 Proxy Server failed to start: ${e.message}")
             }
+        }, "NetFetch-SocksAccept").apply {
+            isDaemon = true
+            start()
         }
     }
 
@@ -656,6 +660,8 @@ class Socks5ProxyServer(
         isRunning = false
         speedMonitorJob?.cancel()
         try { serverSocket?.close() } catch (_: Exception) {}
+        acceptThread?.interrupt()
+        acceptThread = null
         proxyScope.cancel()
         runCatching { socksExecutor.shutdownNow() }
         connectedClientsMap.clear()
