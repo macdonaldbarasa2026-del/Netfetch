@@ -4,12 +4,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.net.InetAddress
 import java.net.Socket
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Owns real upstream TCP sockets created for TUN flows.
@@ -39,8 +42,15 @@ class NetfetchTcpSessionManager(
         lateinit var writerJob: Job
     }
 
+    private val sessionThreadCounter = AtomicLong(0L)
+    private val sessionExecutor = Executors.newCachedThreadPool { runnable ->
+        Thread(runnable, "NetFetch-TunTcp-${sessionThreadCounter.incrementAndGet()}").apply {
+            isDaemon = true
+        }
+    }
+
     private val scope =
-        CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        CoroutineScope(SupervisorJob() + sessionExecutor.asCoroutineDispatcher())
 
     private val sessions =
         ConcurrentHashMap<TcpFlowKey, Session>()
@@ -256,6 +266,7 @@ class NetfetchTcpSessionManager(
             .forEach(::close)
 
         scope.cancel()
+        runCatching { sessionExecutor.shutdownNow() }
     }
 
     fun count(): Int =

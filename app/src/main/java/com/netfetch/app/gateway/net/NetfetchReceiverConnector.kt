@@ -54,7 +54,7 @@ class NetfetchReceiverConnector(
         )
     }
 
-    private val dnsCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, ByteArray>>()
+    private val dnsCache = java.util.concurrent.ConcurrentHashMap<Int, Pair<Long, ByteArray>>()
 
     override fun resolveDns(
         destination: InetAddress,
@@ -63,10 +63,10 @@ class NetfetchReceiverConnector(
         if (queryData.size < 12) return null
 
         val cacheKey = if (queryData.size > 2) {
-            queryData.copyOfRange(2, queryData.size).contentToString()
-        } else ""
+            java.util.Arrays.hashCode(queryData.copyOfRange(2, queryData.size))
+        } else 0
 
-        if (cacheKey.isNotEmpty()) {
+        if (cacheKey != 0) {
             val cached = dnsCache[cacheKey]
             if (cached != null && System.currentTimeMillis() < cached.first) {
                 val resp = cached.second.copyOf()
@@ -81,8 +81,12 @@ class NetfetchReceiverConnector(
             ?: queryDnsOverTcp("1.1.1.1", queryData)
             ?: queryDnsOverTcp("8.8.8.8", queryData)
 
-        if (response != null && cacheKey.isNotEmpty()) {
-            dnsCache[cacheKey] = Pair(System.currentTimeMillis() + 60_000L, response)
+        if (response != null && cacheKey != 0) {
+            if (dnsCache.size > 1000) {
+                val now = System.currentTimeMillis()
+                dnsCache.entries.removeIf { it.value.first <= now }
+            }
+            dnsCache[cacheKey] = Pair(System.currentTimeMillis() + 600_000L, response)
         }
 
         return response

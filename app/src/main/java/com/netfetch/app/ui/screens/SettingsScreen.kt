@@ -342,5 +342,7 @@ fun SettingsScreen(
                 color = TextMuted
             )
         }
+
+        Spacer(modifier = Modifier.height(28.dp))
     }
 }

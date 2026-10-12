@@ -610,14 +610,20 @@ class HotspotService : Service() {
 
         try {
             val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            val lockMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            } else {
+                @Suppress("DEPRECATION")
+                WifiManager.WIFI_MODE_FULL_HIGH_PERF
+            }
             wifiLock = wifiManager?.createWifiLock(
-                WifiManager.WIFI_MODE_FULL_HIGH_PERF,
-                "NetFetch::HighPerfWifiLock"
+                lockMode,
+                "NetFetch::LowLatencyWifiLock"
             )?.apply {
                 setReferenceCounted(false)
                 acquire()
             }
-            Log.i(TAG, "High-performance Wi-Fi Lock acquired successfully")
+            Log.i(TAG, "Low-latency Wi-Fi Lock acquired (mode $lockMode)")
         } catch (e: Exception) {
             Log.w(TAG, "Unable to acquire Wi-Fi Lock: ${e.message}")
         }

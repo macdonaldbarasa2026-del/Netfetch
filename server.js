@@ -5,6 +5,12 @@ const path = require('path');
 const PORT = 3000;
 const APK_PATH = path.join(__dirname, 'app/build/outputs/apk/debug/app-debug.apk');
 
+const DEMO_PRESET_CLIENTS = [
+  { ip: "192.168.49.2", name: "Windows 11 Laptop (Dell XPS)", os: "Windows", connectedTime: "18m ago", transferred: "214.2 MB", status: "online" },
+  { ip: "192.168.49.3", name: "iPhone 15 Pro", os: "iOS", connectedTime: "12m ago", transferred: "98.5 MB", status: "online" },
+  { ip: "192.168.49.4", name: "Nintendo Switch", os: "Console", connectedTime: "5m ago", transferred: "48.3 MB", status: "online" }
+];
+
 let hotspotState = {
   active: true,
   ssid: "DIRECT-NetFetch-AccessPoint",
@@ -17,23 +23,22 @@ let hotspotState = {
   band: "5 GHz (Preferred)",
   carrierBypassActive: true,
   dnsEngineActive: true,
-  uploadSpeedKb: 284,
-  downloadSpeedKb: 1420,
-  totalUploadedMb: 48.6,
-  totalDownloadedMb: 312.4,
-  clients: [
-    { ip: "192.168.49.2", name: "Windows 11 Laptop (Dell XPS)", os: "Windows", connectedTime: "18m ago", transferred: "214.2 MB" },
-    { ip: "192.168.49.3", name: "iPhone 15 Pro", os: "iOS", connectedTime: "12m ago", transferred: "98.5 MB" },
-    { ip: "192.168.49.4", name: "Nintendo Switch", os: "Console", connectedTime: "5m ago", transferred: "48.3 MB" }
-  ]
+  uploadSpeedKb: 0,
+  downloadSpeedKb: 0,
+  totalUploadedMb: 0.0,
+  totalDownloadedMb: 0.0,
+  clients: [] // Empty by default: truly reflects state when no devices are connected!
 };
 
 setInterval(() => {
-  if (hotspotState.active) {
+  if (hotspotState.active && hotspotState.clients.length > 0) {
     hotspotState.downloadSpeedKb = Math.floor(800 + Math.random() * 1800);
     hotspotState.uploadSpeedKb = Math.floor(150 + Math.random() * 450);
     hotspotState.totalDownloadedMb = +(hotspotState.totalDownloadedMb + hotspotState.downloadSpeedKb / 1024 / 8).toFixed(1);
     hotspotState.totalUploadedMb = +(hotspotState.totalUploadedMb + hotspotState.uploadSpeedKb / 1024 / 8).toFixed(1);
+  } else {
+    hotspotState.downloadSpeedKb = 0;
+    hotspotState.uploadSpeedKb = 0;
   }
 }, 2000);
 
@@ -217,6 +222,21 @@ pause
     hotspotState.active = !hotspotState.active;
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true, active: hotspotState.active }));
+    return;
+  }
+
+  if (url === '/api/toggle-demo' && req.method === 'POST') {
+    if (hotspotState.clients.length > 0) {
+      hotspotState.clients = [];
+      hotspotState.downloadSpeedKb = 0;
+      hotspotState.uploadSpeedKb = 0;
+    } else {
+      hotspotState.clients = [...DEMO_PRESET_CLIENTS];
+      hotspotState.totalDownloadedMb = 312.4;
+      hotspotState.totalUploadedMb = 48.6;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, count: hotspotState.clients.length, clients: hotspotState.clients }));
     return;
   }
 
@@ -560,6 +580,14 @@ pause
         <div class="shield-item">
           <div class="shield-dot">✓</div>
           <div>
+            <strong>Anti-Jam Traffic Equalizer & Fair Sharing</strong>
+            <p style="color: var(--muted); font-size: 12px;">Elastic 1024-socket thread pool with per-client quota (128 max) and cooperative fairness. Prevents a single device downloading bulk files from jamming or lagging other connected devices.</p>
+          </div>
+        </div>
+
+        <div class="shield-item">
+          <div class="shield-dot">✓</div>
+          <div>
             <strong>128KB Low-Latency TCP Socket Buffers</strong>
             <p style="color: var(--muted); font-size: 12px;">TCP_NODELAY enabled for competitive multiplayer gaming and smooth 4K 60fps streaming.</p>
           </div>
@@ -626,11 +654,24 @@ pause
 
     <div class="card" style="margin-bottom: 16px;">
       <div class="card-title">
-        <span>Connected Devices (${hotspotState.clients.length})</span>
-        <button class="btn btn-outline" style="padding: 4px 10px; font-size: 12px;" onclick="location.reload()">Refresh</button>
+        <span>Connected Devices (<span id="client-count">${hotspotState.clients.length}</span>)</span>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-outline" style="padding: 4px 10px; font-size: 12px;" onclick="toggleDemoClients()" id="demo-toggle-btn">
+            ${hotspotState.clients.length > 0 ? 'Clear Demo Devices' : '+ Test Demo Devices'}
+          </button>
+          <button class="btn btn-outline" style="padding: 4px 10px; font-size: 12px;" onclick="location.reload()">Refresh</button>
+        </div>
       </div>
       <div id="client-list">
-        ${hotspotState.clients.map(c => `
+        ${hotspotState.clients.length === 0 ? `
+          <div style="text-align: center; padding: 28px 16px; color: var(--muted); background: var(--bg); border: 1px dashed var(--border); border-radius: 10px;">
+            <div style="font-size: 28px; margin-bottom: 6px;">📱 💻</div>
+            <strong style="color: var(--text); font-size: 14px; display: block; margin-bottom: 4px;">No Devices Connected Yet</strong>
+            <p style="font-size: 12px; max-width: 420px; margin: 0 auto;">
+              Connect your PC, iPhone, or console to Wi-Fi <strong>${hotspotState.ssid}</strong> and configure HTTP proxy <strong>${hotspotState.gateway}:${hotspotState.proxyPort}</strong>. Active devices will appear here automatically.
+            </p>
+          </div>
+        ` : hotspotState.clients.map(c => `
           <div class="client-card">
             <div class="client-info">
               <strong>${c.name}</strong>
@@ -722,7 +763,17 @@ pause
         const data = await res.json();
         location.reload();
       } catch (err) {
-        alert('Could not toggle hotspot: ' + err);
+        console.error('Could not toggle hotspot: ' + err);
+      }
+    }
+
+    async function toggleDemoClients() {
+      try {
+        const res = await fetch('/api/toggle-demo', { method: 'POST' });
+        const data = await res.json();
+        location.reload();
+      } catch (err) {
+        console.error('Could not toggle demo clients: ' + err);
       }
     }
 
@@ -730,9 +781,16 @@ pause
       try {
         const res = await fetch('/api/status');
         const data = await res.json();
-        document.getElementById('val-down').innerText = (data.downloadSpeedKb / 1024).toFixed(2) + ' MB/s';
-        document.getElementById('val-up').innerText = (data.uploadSpeedKb / 1024).toFixed(2) + ' MB/s';
-        document.getElementById('val-tot-down').innerText = data.totalDownloadedMb + ' MB';
+        const downEl = document.getElementById('val-down');
+        const upEl = document.getElementById('val-up');
+        const totDownEl = document.getElementById('val-tot-down');
+        const clientsEl = document.getElementById('val-clients');
+        const clientCountEl = document.getElementById('client-count');
+        if (downEl) downEl.innerText = (data.downloadSpeedKb / 1024).toFixed(2) + ' MB/s';
+        if (upEl) upEl.innerText = (data.uploadSpeedKb / 1024).toFixed(2) + ' MB/s';
+        if (totDownEl) totDownEl.innerText = data.totalDownloadedMb + ' MB';
+        if (clientsEl) clientsEl.innerText = data.clients.length;
+        if (clientCountEl) clientCountEl.innerText = data.clients.length;
       } catch(e) {}
     }, 2000);
   </script>

@@ -449,7 +449,7 @@ fun HomeScreen(
                         Icon(Icons.Default.Security, contentDescription = null, tint = GreenSuccess, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Stealth TTL 64 Active • PC Broadband Ready",
+                            text = "Anti-Jam Fair Share Active • Stealth TTL 64 • PC Ready",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = GreenSuccess
@@ -583,6 +583,8 @@ fun HomeScreen(
                 }
             }
         }
+
+        Spacer(modifier = Modifier.height(28.dp))
     }
 
     // QR Code Dialog

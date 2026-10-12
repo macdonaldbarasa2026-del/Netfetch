@@ -6,6 +6,7 @@ import com.netfetch.app.model.ClientDevice
 import kotlinx.coroutines.*
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.PushbackInputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -35,7 +36,14 @@ class HttpProxyServer(
     private val TAG = "NetFetchProxy"
     private var serverSocket: ServerSocket? = null
     @Volatile private var isRunning = false
-    private val proxyScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val proxyThreadCounter = AtomicLong(0L)
+    private val proxyExecutor = java.util.concurrent.Executors.newCachedThreadPool { runnable ->
+        Thread(runnable, "NetFetch-HttpPipe-${proxyThreadCounter.incrementAndGet()}").apply {
+            isDaemon = true
+        }
+    }
+    private val proxyDispatcher = proxyExecutor.asCoroutineDispatcher()
+    private val proxyScope = CoroutineScope(proxyDispatcher + SupervisorJob())
 
     private val connectedClientsMap = ConcurrentHashMap<String, ClientDevice>()
     private val clientUploadBytes = ConcurrentHashMap<String, AtomicLong>()
@@ -49,7 +57,7 @@ class HttpProxyServer(
 
     /**
      * Bounds the number of simultaneous HTTP/HTTPS proxy tunnels.
-     * Prevents unbounded thread/coroutine creation when many clients connect.
+     * Prevents resource exhaustion while supporting many concurrent connections.
      */
     private val clientSemaphore =
         kotlinx.coroutines.sync.Semaphore(MAX_CONCURRENT_CLIENTS)
@@ -57,7 +65,9 @@ class HttpProxyServer(
     companion object {
         private const val CONNECT_TIMEOUT_MS = 15000
         private const val READ_TIMEOUT_MS = 30000
-        private const val MAX_CONCURRENT_CLIENTS = 256
+        private const val TUNNEL_IDLE_TIMEOUT_MS = 60000
+        private const val MAX_CONCURRENT_CLIENTS = 1024
+        private const val MAX_CONCURRENT_PER_CLIENT = 128
     }
 
     fun start() {
@@ -68,9 +78,9 @@ class HttpProxyServer(
             try {
                 serverSocket = ServerSocket().apply {
                     reuseAddress = true
-                    bind(InetSocketAddress(InetAddress.getByName("0.0.0.0"), port), 100)
+                    bind(InetSocketAddress(InetAddress.getByName("0.0.0.0"), port), 512)
                 }
-                Log.i(TAG, "NetFetch HTTP Proxy listening on port $port")
+                Log.i(TAG, "NetFetch HTTP Proxy listening on port $port (Anti-Jam Fair Share Active)")
 
                 startSpeedMonitor()
 
@@ -115,6 +125,15 @@ class HttpProxyServer(
                 )
                 return
             }
+
+            // Anti-Jam Protection: Prevent a single device from monopolizing proxy connection slots
+            val currentClientConns = clientConnectionCounts[clientIp]?.get() ?: 0
+            if (currentClientConns >= MAX_CONCURRENT_PER_CLIENT) {
+                Log.w(TAG, "Anti-Jam: client $clientIp exceeded per-device limit ($currentClientConns); connection throttled")
+                clientSocket.close()
+                return
+            }
+
             trackClientConnection(clientIp)
             clientSocket.soTimeout = READ_TIMEOUT_MS
             val clientIn = clientSocket.getInputStream()
@@ -355,11 +374,13 @@ class HttpProxyServer(
         try {
             val targetSocket = openUpstreamSocket(host, port)
 
-            // Established CONNECT tunnels must support long-lived connections.
-            targetSocket.soTimeout = 0
-            clientSocket.soTimeout = 0
+            // Set idle inactivity timeout: 60s of silence cleanly reclaims connection slots
+            targetSocket.soTimeout = TUNNEL_IDLE_TIMEOUT_MS
+            clientSocket.soTimeout = TUNNEL_IDLE_TIMEOUT_MS
             targetSocket.tcpNoDelay = true
             clientSocket.tcpNoDelay = true
+            targetSocket.keepAlive = true
+            clientSocket.keepAlive = true
 
             val okResponse = "HTTP/1.1 200 Connection Established\r\nProxy-Agent: NetFetch/1.0\r\n\r\n"
             clientOut.write(okResponse.toByteArray(Charsets.ISO_8859_1))
@@ -457,11 +478,13 @@ class HttpProxyServer(
 
             val targetSocket = openUpstreamSocket(host, port)
 
-            // Established HTTP proxy tunnels must support long-lived connections.
-            targetSocket.soTimeout = 0
-            clientSocket.soTimeout = 0
+            // Set idle inactivity timeout: 60s of silence cleanly reclaims connection slots
+            targetSocket.soTimeout = TUNNEL_IDLE_TIMEOUT_MS
+            clientSocket.soTimeout = TUNNEL_IDLE_TIMEOUT_MS
             targetSocket.tcpNoDelay = true
             clientSocket.tcpNoDelay = true
+            targetSocket.keepAlive = true
+            clientSocket.keepAlive = true
 
             val targetOut = targetSocket.getOutputStream()
             val targetIn = targetSocket.getInputStream()
@@ -541,16 +564,24 @@ class HttpProxyServer(
     }
 
     private fun pipeStreams(clientIp: String, input: InputStream, output: OutputStream, isUpload: Boolean) {
-        val buffer = ByteArray(64 * 1024)
+        val buffer = ByteArray(32 * 1024)
         try {
             var read: Int
             while (input.read(buffer).also { read = it } != -1) {
                 output.write(buffer, 0, read)
-                output.flush()
+                if (input.available() == 0) {
+                    output.flush()
+                }
                 recordBytes(clientIp, read.toLong(), isUpload)
+
+                // Anti-Jam Fairness: if multiple devices are active, yield CPU cooperatively during heavy transfers
+                if (connectedClientsMap.size > 1 && read > 16384) {
+                    Thread.yield()
+                }
             }
+            output.flush()
         } catch (_: Exception) {
-            // Connection closed or reset — normal termination
+            // Connection closed or idle timeout reached — clean termination
         }
     }
 
@@ -659,6 +690,7 @@ class HttpProxyServer(
             Log.e(TAG, "Error closing server socket: ${e.message}")
         }
         proxyScope.cancel()
+        runCatching { proxyExecutor.shutdownNow() }
         connectedClientsMap.clear()
         clientConnectionCounts.clear()
         clientUploadBytes.clear()

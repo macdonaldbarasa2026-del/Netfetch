@@ -38,15 +38,23 @@ class Socks5ProxyServer(
     private val TAG = "NetFetchSocks5"
     private var serverSocket: ServerSocket? = null
     @Volatile private var isRunning = false
-    private val proxyScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val socksThreadCounter = AtomicLong(0L)
+    private val socksExecutor = java.util.concurrent.Executors.newCachedThreadPool { runnable ->
+        Thread(runnable, "NetFetch-Socks5-${socksThreadCounter.incrementAndGet()}").apply {
+            isDaemon = true
+        }
+    }
+    private val proxyDispatcher = socksExecutor.asCoroutineDispatcher()
+    private val proxyScope = CoroutineScope(proxyDispatcher + SupervisorJob())
 
     private val connectedClientsMap = ConcurrentHashMap<String, ClientDevice>()
     private val clientUploadBytes = ConcurrentHashMap<String, AtomicLong>()
     private val clientDownloadBytes = ConcurrentHashMap<String, AtomicLong>()
+    private val clientConnectionCounts = ConcurrentHashMap<String, AtomicLong>()
     private val totalUploadCounter = AtomicLong(0L)
     private val totalDownloadCounter = AtomicLong(0L)
     private var speedMonitorJob: Job? = null
-    private val clientSemaphore = kotlinx.coroutines.sync.Semaphore(512)
+    private val clientSemaphore = kotlinx.coroutines.sync.Semaphore(MAX_CONCURRENT_CLIENTS)
 
     companion object {
         private const val SOCKS5_VERSION = 5
@@ -66,6 +74,9 @@ class Socks5ProxyServer(
         private const val REP_CMD_NOT_SUPPORTED = 7
         private const val CONNECT_TIMEOUT_MS = 15000
         private const val READ_TIMEOUT_MS = 30000
+        private const val TUNNEL_IDLE_TIMEOUT_MS = 60000
+        private const val MAX_CONCURRENT_CLIENTS = 1024
+        private const val MAX_CONCURRENT_PER_CLIENT = 128
     }
 
     fun start() {
@@ -78,9 +89,9 @@ class Socks5ProxyServer(
             try {
                 serverSocket = ServerSocket().apply {
                     reuseAddress = true
-                    bind(InetSocketAddress(InetAddress.getByName("0.0.0.0"), socksPort), 100)
+                    bind(InetSocketAddress(InetAddress.getByName("0.0.0.0"), socksPort), 512)
                 }
-                Log.i(TAG, "NetFetch SOCKS5 Server listening on port $socksPort")
+                Log.i(TAG, "NetFetch SOCKS5 Server listening on port $socksPort (Anti-Jam Fair Share Active)")
 
                 while (isRunning && !serverSocket!!.isClosed) {
                     try {
@@ -109,7 +120,17 @@ class Socks5ProxyServer(
 
     private suspend fun handleSocksClient(client: Socket) {
         val clientIp = client.inetAddress?.hostAddress ?: "Unknown"
+
+        // Anti-Jam Protection: Prevent a single device from monopolizing SOCKS connection slots
+        val currentConns = clientConnectionCounts[clientIp]?.get() ?: 0
+        if (currentConns >= MAX_CONCURRENT_PER_CLIENT) {
+            Log.w(TAG, "Anti-Jam: client $clientIp exceeded SOCKS limit ($currentConns); connection throttled")
+            runCatching { client.close() }
+            return
+        }
+
         trackClient(clientIp)
+        clientConnectionCounts.computeIfAbsent(clientIp) { AtomicLong() }.incrementAndGet()
 
         try {
             client.tcpNoDelay = true
@@ -288,6 +309,11 @@ class Socks5ProxyServer(
         } catch (e: Exception) {
             Log.d(TAG, "SOCKS5 client finished ($clientIp): ${e.message}")
             try { client.close() } catch (_: Exception) {}
+        } finally {
+            val remaining = clientConnectionCounts[clientIp]?.decrementAndGet() ?: 0
+            if (remaining <= 0) {
+                clientConnectionCounts.remove(clientIp)
+            }
         }
     }
 
@@ -419,11 +445,13 @@ class Socks5ProxyServer(
     ) {
         try {
             val targetSocket = openUpstreamSocket(host, port)
-            // Established proxy tunnels must support long-lived connections.
-            targetSocket.soTimeout = 0
-            clientSocket.soTimeout = 0
+            // Set idle inactivity timeout: 60s of silence cleanly reclaims connection slots
+            targetSocket.soTimeout = TUNNEL_IDLE_TIMEOUT_MS
+            clientSocket.soTimeout = TUNNEL_IDLE_TIMEOUT_MS
             targetSocket.tcpNoDelay = true
             clientSocket.tcpNoDelay = true
+            targetSocket.keepAlive = true
+            clientSocket.keepAlive = true
 
             // Build success reply using the actual upstream address family.
             val localAddress = targetSocket.localAddress
@@ -518,12 +546,14 @@ class Socks5ProxyServer(
     }
 
     private fun pipeStreams(clientIp: String, input: InputStream, output: OutputStream, isUpload: Boolean) {
-        val buffer = ByteArray(64 * 1024)
+        val buffer = ByteArray(32 * 1024)
         try {
             var read: Int
             while (input.read(buffer).also { read = it } != -1) {
                 output.write(buffer, 0, read)
-                output.flush()
+                if (input.available() == 0) {
+                    output.flush()
+                }
                 val amount = read.toLong()
 
                 if (isUpload) {
@@ -533,7 +563,13 @@ class Socks5ProxyServer(
                     totalDownloadCounter.addAndGet(amount)
                     clientDownloadBytes[clientIp]?.addAndGet(amount)
                 }
+
+                // Anti-Jam Fairness: cooperative yield during heavy stream when multiple devices connected
+                if (connectedClientsMap.size > 1 && read > 16384) {
+                    Thread.yield()
+                }
             }
+            output.flush()
         } catch (_: Exception) {}
     }
 
@@ -594,5 +630,10 @@ class Socks5ProxyServer(
         speedMonitorJob?.cancel()
         try { serverSocket?.close() } catch (_: Exception) {}
         proxyScope.cancel()
+        runCatching { socksExecutor.shutdownNow() }
+        connectedClientsMap.clear()
+        clientConnectionCounts.clear()
+        clientUploadBytes.clear()
+        clientDownloadBytes.clear()
     }
 }

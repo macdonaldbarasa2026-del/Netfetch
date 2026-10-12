@@ -33,7 +33,9 @@ class NetfetchTcpEngine(
         const val MAX_TCP_PAYLOAD = 1460
 
         const val RETRANSMIT_TIMEOUT_MS = 400L
-        const val IDLE_TIMEOUT_MS = 5 * 60 * 1_000L
+        const val IDLE_TIMEOUT_MS = 90_000L
+        const val HALF_CLOSED_TIMEOUT_MS = 15_000L
+        const val MAX_FLOWS = 2048
         const val HOUSEKEEPING_MS = 1_000L
 
         const val TCP_FIN = TcpHeader.FIN
@@ -222,13 +224,18 @@ class NetfetchTcpEngine(
             return
         }
 
-        if (flows.size >= 512) {
-            sendRst(
-                key = key,
-                sequence = 0,
-                acknowledgement = tcp.sequence + 1
-            )
-            return
+        if (flows.size >= MAX_FLOWS) {
+            val oldest = flows.values.minByOrNull { it.lastActivityAt }
+            if (oldest != null) {
+                closeLocked(oldest.key)
+            } else {
+                sendRst(
+                    key = key,
+                    sequence = 0,
+                    acknowledgement = tcp.sequence + 1
+                )
+                return
+            }
         }
 
         val serverSequence =
@@ -701,10 +708,9 @@ class NetfetchTcpEngine(
                     }
                 }
 
-                if (
-                    now - flow.lastActivityAt >=
-                    IDLE_TIMEOUT_MS
-                ) {
+                val isHalfClosed = flow.clientFinReceived || flow.serverFinSent
+                val maxIdle = if (isHalfClosed) HALF_CLOSED_TIMEOUT_MS else IDLE_TIMEOUT_MS
+                if (now - flow.lastActivityAt >= maxIdle) {
                     closeLocked(flow.key)
                 }
             }

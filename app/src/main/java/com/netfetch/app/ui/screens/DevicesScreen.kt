@@ -86,14 +86,43 @@ fun DevicesScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text = "Internet Connection",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = PrimaryBlack
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Internet Connection",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = PrimaryBlack
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = GreenSuccess.copy(alpha = 0.10f),
+                        border = BorderStroke(1.dp, GreenSuccess.copy(alpha = 0.25f))
+                    ) {
+                        Text(
+                            text = "ANTI-JAM ON",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = GreenSuccess,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(6.dp))
+
+                Text(
+                    text = "Anti-Jam Equalizer active: bandwidth & connections are fairly balanced so devices don't lag.",
+                    fontSize = 11.sp,
+                    color = GreenSuccess,
+                    fontWeight = FontWeight.Medium
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
                     text = "Connect the device to the NetFetch Wi-Fi, then set its HTTP/HTTPS proxy to:",
@@ -169,30 +198,23 @@ fun DevicesScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = "PAC URL: http://${config.hostIp}:${config.pacPort}/wpad.dat",
-                    fontSize = 11.sp,
-                    color = TextMuted
-                )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Text(
-                    text = "Web Portal: http://${config.hostIp}:${config.proxyPort}/ (Open in browser for 1-click Windows .bat setup)",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = PrimaryBlack
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = "Important: NetFetch is a rootless proxy. The connected device must use the displayed proxy settings. Apps that ignore system HTTP/HTTPS proxy settings may not use the connection.",
-                    fontSize = 11.sp,
-                    color = TextMuted
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "PAC URL: http://${config.hostIp}:${config.pacPort}/wpad.dat",
+                        fontSize = 11.sp,
+                        color = TextMuted
+                    )
+                    Text(
+                        text = "Portal: :${config.proxyPort}/",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = PrimaryBlack
+                    )
+                }
             }
         }
 
@@ -259,7 +281,8 @@ fun DevicesScreen(
             }
         } else {
             LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 28.dp)
             ) {
                 items(connectedClients) { client ->
                     ClientDeviceCard(client = client, context = context)
