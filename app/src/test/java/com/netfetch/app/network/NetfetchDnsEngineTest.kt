@@ -32,6 +32,14 @@ class NetfetchDnsEngineTest {
     }
 
     @Test
+    fun testRawIpv6BypassDns() {
+        val result = NetfetchDnsEngine.resolve("2001:4860:4860::8888")
+        assertNotNull(result)
+        assertEquals(1, result.size)
+        assertEquals(InetAddress.getByName("2001:4860:4860::8888"), result[0])
+    }
+
+    @Test
     fun testWellKnownHostSeeded() {
         val googleDns = NetfetchDnsEngine.resolve("dns.google")
         assertNotNull(googleDns)
@@ -55,6 +63,21 @@ class NetfetchDnsEngineTest {
         val after = NetfetchDnsEngine.resolve("dns.google")
         assertNotNull(after)
         assertEquals("8.8.8.8", after[0].hostAddress)
+    }
+
+    @Test
+    fun testBracketedIpv6BypassDns() {
+        val result = NetfetchDnsEngine.resolve("[2001:db8::1]")
+        assertNotNull(result)
+        assertEquals(1, result.size)
+        assertEquals(InetAddress.getByName("2001:db8::1"), result[0])
+    }
+
+    @Test(expected = UnknownHostException::class)
+    fun testHexHostnameNotNumericBypass() {
+        // "dead.beef.example.test" has only hex chars in the first two labels,
+        // which previously falsely bypassed DNS and caused java.net.UnknownHostException or invalid parse
+        NetfetchDnsEngine.resolve("dead.beef.example.invalid")
     }
 
     @Test(expected = UnknownHostException::class)

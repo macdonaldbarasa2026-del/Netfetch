@@ -138,6 +138,7 @@ class HotspotService : Service() {
     }
 
     private var internetMonitorJob: Job? = null
+    private var internetVerificationJob: Job? = null
     private var upstreamMonitorJob: Job? = null
     private var gatewayStartJob: Job? = null
 
@@ -435,9 +436,19 @@ class HotspotService : Service() {
     }
 
     private fun verifyInternet() {
-        serviceScope.launch(Dispatchers.IO) {
+        internetVerificationJob?.cancel()
+        internetVerificationJob = serviceScope.launch(Dispatchers.IO) {
             val network = upstreamNetworkManager?.currentNetwork
             val result = ConnectivityTester.testConnectivity(network)
+
+            // If cancelled while probing (e.g. rapid network change), drop stale result
+            if (!isActive) return@launch
+
+            // If network changed while probing, don't apply result to new network; trigger a fresh probe
+            if (upstreamNetworkManager?.currentNetwork != network) {
+                verifyInternet()
+                return@launch
+            }
 
             if (!result && network != null) {
                 Log.w(
@@ -458,6 +469,9 @@ class HotspotService : Service() {
     }
 
     fun stopHotspot() {
+        internetVerificationJob?.cancel()
+        internetVerificationJob = null
+
         internetMonitorJob?.cancel()
         internetMonitorJob = null
 

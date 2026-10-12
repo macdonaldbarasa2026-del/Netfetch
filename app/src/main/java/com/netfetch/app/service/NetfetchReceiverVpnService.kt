@@ -175,7 +175,8 @@ class NetfetchReceiverVpnService : VpnService() {
 
             Log.i(
                 TAG,
-                "Receiver VPN active: provider=$providerHost:$providerPort TCP=true UDP=false"
+                "Receiver VPN active: provider=$providerHost:$providerPort " +
+                    "TCP=true UDP=true (DNS-over-TCP for port-53; SOCKS5 UDP ASSOCIATE not forwarded)"
             )
         } catch (e: Exception) {
             Log.e(

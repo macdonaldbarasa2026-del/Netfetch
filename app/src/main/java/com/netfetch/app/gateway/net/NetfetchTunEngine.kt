@@ -219,11 +219,34 @@ class NetfetchTunEngine(
 
         try {
             while (running.get()) {
-                val packet =
-                    writeQueue.take()
+                /*
+                 * Use a timed poll instead of blocking take().
+                 *
+                 * take() blocks indefinitely when the queue is empty.  If
+                 * stop() sets running=false while the writer is parked in
+                 * take(), the thread can only be woken by interrupt().  The
+                 * race between interrupt() and the next queued packet makes
+                 * shutdown non-deterministic.
+                 *
+                 * poll(100ms) times out, re-checks running.get(), and exits
+                 * cleanly without depending on interrupt timing.
+                 */
+                val packet = writeQueue.poll(
+                    100, java.util.concurrent.TimeUnit.MILLISECONDS
+                ) ?: continue
 
                 output.write(packet)
             }
+
+            // Drain any packets already in the queue at the moment stop() was
+            // called so in-flight data is not silently discarded.
+            var remaining: ByteArray?
+            while (writeQueue.poll().also { remaining = it } != null) {
+                runCatching { output.write(remaining!!) }
+            }
+        } catch (_: InterruptedException) {
+            // Interrupted during the timed poll — treat as stop signal.
+            Thread.currentThread().interrupt()
         } catch (_: Exception) {
             if (running.get()) {
                 running.set(false)
@@ -249,6 +272,12 @@ class NetfetchTunEngine(
 
         readerThread?.interrupt()
         writerThread?.interrupt()
+
+        // Allow the writer thread to finish its drain loop cleanly before closing
+        // the underlying file descriptor to avoid EBADF (Bad file descriptor) exceptions.
+        runCatching {
+            writerThread?.join(500)
+        }
 
         readerThread = null
         writerThread = null

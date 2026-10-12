@@ -42,7 +42,10 @@ class VpnGatewayService : VpnService() {
         private const val VPN_MTU = 1500
 
         private const val NOTIFICATION_CHANNEL = "netfetch_gateway"
-        private const val NOTIFICATION_ID = 8282
+        // HotspotService owns 8282, NetfetchReceiverVpnService owns 8283.
+        // Using a distinct ID prevents Android from overwriting the hotspot
+        // foreground-service notification when the VPN gateway starts.
+        private const val NOTIFICATION_ID = 8284
     }
 
     private var tunEngine: NetfetchTunEngine? = null

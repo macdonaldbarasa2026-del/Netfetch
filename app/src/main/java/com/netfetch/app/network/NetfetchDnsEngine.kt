@@ -42,11 +42,16 @@ object NetfetchDnsEngine {
     }
 
     private fun seedWellKnownHosts() {
+        // Only seed hostnames with stable, publicly-announced IPs.
+        // connectivitycheck.gstatic.com is NOT seeded here because Google
+        // rotates its anycast addresses per region; a hardcoded IP would
+        // route probes to the wrong data-centre after an IP rotation and
+        // cause false "No Internet" results.  It resolves normally on first
+        // use and is then cached by the standard TTL path.
         val farFuture = System.currentTimeMillis() + (24 * 60 * 60 * 1000L)
         try {
             cache["one.one.one.one"] = CachedDnsRecord(listOf(InetAddress.getByName("1.1.1.1")), farFuture)
             cache["dns.google"] = CachedDnsRecord(listOf(InetAddress.getByName("8.8.8.8")), farFuture)
-            cache["connectivitycheck.gstatic.com"] = CachedDnsRecord(listOf(InetAddress.getByName("142.250.190.3")), farFuture)
         } catch (_: Exception) {}
     }
 
@@ -60,7 +65,12 @@ object NetfetchDnsEngine {
         // 1. Bypass DNS if host is already an IPv4 or IPv6 address
         if (isNumericIp(trimmedHost)) {
             try {
-                return listOf(InetAddress.getByName(trimmedHost))
+                val cleanHost = if (trimmedHost.startsWith("[") && trimmedHost.endsWith("]")) {
+                    trimmedHost.substring(1, trimmedHost.length - 1)
+                } else {
+                    trimmedHost
+                }
+                return listOf(InetAddress.getByName(cleanHost))
             } catch (_: Exception) {}
         }
 
@@ -148,13 +158,33 @@ object NetfetchDnsEngine {
         }
     }
 
+    /**
+     * Returns true only for genuine numeric IP literals that do not need DNS.
+     *
+     * - IPv4: digits and dots only (e.g. "192.168.1.1")
+     * - IPv6 bracket notation: "[::1]" — starts with '['
+     * - IPv6 raw notation: "::1" — starts with ':' or contains ':'
+     *   with only hex digits, colons, and the optional trailing %scope.
+     *
+     * Hostnames that use letters a–f (e.g. "dead.beef.example.com",
+     * "facade.co") must NOT be classified as numeric IPs. The old
+     * implementation allowed those chars globally, causing silent
+     * DNS bypass and connection failures for such hosts.
+     */
     private fun isNumericIp(host: String): Boolean {
         if (host.isEmpty()) return false
-        val first = host[0]
-        if (first.isDigit() || first == '[' || first == ':') {
-            return host.all { it.isDigit() || it == '.' || it == ':' || it == '[' || it == ']' || it in 'a'..'f' || it in 'A'..'F' }
+
+        return when {
+            // IPv6 bracket literal: "[::1]", "[2001:db8::1]"
+            host.startsWith("[") -> host.endsWith("]")
+
+            // IPv6 raw literal: contains at least 2 colons and valid IPv6 characters
+            host.count { it == ':' } >= 2 ->
+                host.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' || it == ':' || it == '%' || it == '.' }
+
+            // Bare IPv4: only digits and dots; exactly 3 dots (e.g. "192.168.1.1")
+            else -> host.all { it.isDigit() || it == '.' } && host.count { it == '.' } == 3
         }
-        return false
     }
 
     private fun putInCache(host: String, addresses: List<InetAddress>, expiresAt: Long, network: Network?) {
@@ -179,8 +209,9 @@ object NetfetchDnsEngine {
     fun invalidateOnNetworkChange(newNetwork: Network? = null) {
         val count = cache.size
         val keysToRemove = cache.entries.filter { (key, record) ->
-            // Keep well-known permanent hosts, evict network-bound entries
-            key != "one.one.one.one" && key != "dns.google" && key != "connectivitycheck.gstatic.com" &&
+            // Keep only the two permanently-seeded public DNS resolvers; evict
+            // everything else that is bound to a specific (now-departed) network.
+            key != "one.one.one.one" && key != "dns.google" &&
                 (record.boundNetwork != null && record.boundNetwork != newNetwork)
         }.map { it.key }
 

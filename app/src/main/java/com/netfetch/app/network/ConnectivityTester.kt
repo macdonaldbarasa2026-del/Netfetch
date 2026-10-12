@@ -4,6 +4,7 @@ import android.net.Network
 import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
@@ -18,8 +19,8 @@ object ConnectivityTester {
 
     private const val TAG = "NetFetchConnTest"
 
-    private const val CONNECT_TIMEOUT_MS = 2_500
-    private const val READ_TIMEOUT_MS = 2_500
+    private const val CONNECT_TIMEOUT_MS = 2_000
+    private const val READ_TIMEOUT_MS = 1_500
 
     private val TEST_URLS = listOf(
         "http://connectivitycheck.gstatic.com/generate_204",
@@ -37,6 +38,7 @@ object ConnectivityTester {
             try {
                 if (network == null) {
                     for (testUrl in TEST_URLS) {
+                        if (!isActive) break
                         if (testHttpDirect(testUrl)) {
                             success = true
                             Log.i(TAG, "Internet validated via default routing by $testUrl")
@@ -45,6 +47,7 @@ object ConnectivityTester {
                     }
                 } else {
                     for (testUrl in TEST_URLS) {
+                        if (!isActive) break
                         if (testHttp(network, testUrl)) {
                             success = true
                             Log.i(TAG, "Internet validated on network $network by $testUrl")

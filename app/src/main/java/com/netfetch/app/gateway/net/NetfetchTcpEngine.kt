@@ -31,6 +31,7 @@ class NetfetchTcpEngine(
         const val MAX_UNACKED_BYTES = 65_535
         const val MAX_UNACKED_SEGMENTS = 128
         const val MAX_TCP_PAYLOAD = 1460
+        const val MAX_PENDING_UPSTREAM_BYTES = 512 * 1024
 
         const val RETRANSMIT_TIMEOUT_MS = 400L
         const val IDLE_TIMEOUT_MS = 90_000L
@@ -71,7 +72,8 @@ class NetfetchTcpEngine(
         val unacknowledged: java.util.ArrayDeque<Segment> =
             java.util.ArrayDeque(),
 
-        var unacknowledgedBytes: Int = 0
+        var unacknowledgedBytes: Int = 0,
+        var pendingUpstreamData: ByteArray? = null
     )
 
     private val flows = ConcurrentHashMap<TcpFlowKey, Flow>()
@@ -165,9 +167,7 @@ class NetfetchTcpEngine(
 
             flow.lastActivityAt = System.currentTimeMillis()
 
-            if (tcp.window > 0) {
-                flow.clientWindow = tcp.window
-            }
+            flow.clientWindow = tcp.window
 
             if (tcp.ack) {
                 processAcknowledgementLocked(
@@ -425,15 +425,30 @@ class NetfetchTcpEngine(
     ) {
         val flow = flows[key] ?: return
 
-        if (data.isEmpty() || flow.closed) {
+        if ((data.isEmpty() && flow.pendingUpstreamData == null) || flow.closed) {
             return
         }
 
         flow.lastActivityAt = System.currentTimeMillis()
 
+        val fullData = if (flow.pendingUpstreamData != null) {
+            val pending = flow.pendingUpstreamData!!
+            flow.pendingUpstreamData = null
+            if (data.isNotEmpty()) {
+                val combined = ByteArray(pending.size + data.size)
+                System.arraycopy(pending, 0, combined, 0, pending.size)
+                System.arraycopy(data, 0, combined, pending.size, data.size)
+                combined
+            } else {
+                pending
+            }
+        } else {
+            data
+        }
+
         var offset = 0
 
-        while (offset < data.size) {
+        while (offset < fullData.size) {
             if (
                 flow.unacknowledgedBytes >= MAX_UNACKED_BYTES ||
                 flow.unacknowledged.size >= MAX_UNACKED_SEGMENTS
@@ -460,7 +475,7 @@ class NetfetchTcpEngine(
 
             val chunkSize =
                 minOf(
-                    data.size - offset,
+                    fullData.size - offset,
                     available,
                     availableClientWindow,
                     MAX_TCP_PAYLOAD
@@ -471,7 +486,7 @@ class NetfetchTcpEngine(
             }
 
             val chunk =
-                data.copyOfRange(
+                fullData.copyOfRange(
                     offset,
                     offset + chunkSize
                 )
@@ -506,6 +521,22 @@ class NetfetchTcpEngine(
             writer(packet)
 
             offset += chunk.size
+        }
+
+        if (offset < fullData.size) {
+            val remaining = fullData.size - offset
+            if (remaining > MAX_PENDING_UPSTREAM_BYTES) {
+                // Buffer cap exceeded: client has stopped consuming data or acknowledging packets.
+                // Discarding a partial tail would corrupt byte stream ordering. Cleanly terminate with RST.
+                sendRst(
+                    key = key,
+                    sequence = flow.nextServerSequence,
+                    acknowledgement = flow.nextClientSequence
+                )
+                closeLocked(key)
+                return
+            }
+            flow.pendingUpstreamData = fullData.copyOfRange(offset, fullData.size)
         }
     }
 
@@ -648,6 +679,10 @@ class NetfetchTcpEngine(
                     ).coerceAtLeast(0)
 
             break
+        }
+
+        if (flow.pendingUpstreamData != null && !flow.closed) {
+            handleUpstreamDataLocked(flow.key, ByteArray(0))
         }
 
         if (

@@ -18,6 +18,7 @@ class NetfetchSocks5Client(
 
         private const val CONNECT_TIMEOUT_MS = 10_000
         private const val SO_TIMEOUT_MS = 30_000
+        private const val ESTABLISHED_SO_TIMEOUT_MS = 900_000 // 15 minutes dead-tunnel safety bound
     }
 
     fun connect(
@@ -228,10 +229,10 @@ class NetfetchSocks5Client(
             readFully(input, 2)
 
             /*
-             * Once CONNECT succeeds, remove the read timeout so long-lived
-             * streams are not disconnected by an idle socket timeout.
+             * Once CONNECT succeeds, set a bounded idle read timeout (5 minutes)
+             * so stalled, half-open, or abandoned tunnels do not leak file descriptors.
              */
-            socket.soTimeout = 0
+            socket.soTimeout = ESTABLISHED_SO_TIMEOUT_MS
 
             return socket
 
