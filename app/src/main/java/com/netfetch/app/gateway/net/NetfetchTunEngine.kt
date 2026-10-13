@@ -31,7 +31,7 @@ class NetfetchTunEngine(
      * TUN writer is temporarily behind.
      */
     private val writeQueue =
-        java.util.concurrent.ArrayBlockingQueue<ByteArray>(2048)
+        java.util.concurrent.ArrayBlockingQueue<ByteArray>(4096)
 
     private val tcpEngine =
         NetfetchTcpEngine(

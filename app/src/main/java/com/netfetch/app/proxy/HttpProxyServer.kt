@@ -89,9 +89,10 @@ class HttpProxyServer(
             try {
                 serverSocket = ServerSocket().apply {
                     reuseAddress = true
-                    bind(InetSocketAddress(InetAddress.getByName("0.0.0.0"), port), 512)
+                    receiveBufferSize = 256 * 1024
+                    bind(InetSocketAddress(InetAddress.getByName("0.0.0.0"), port), 1024)
                 }
-                Log.i(TAG, "NetFetch HTTP Proxy listening on port $port (Anti-Jam Fair Share Active)")
+                Log.i(TAG, "NetFetch HTTP Proxy listening on port $port (High-Throughput Stream Routing Active)")
 
                 while (isRunning && serverSocket?.isClosed == false) {
                     try {
@@ -130,8 +131,8 @@ class HttpProxyServer(
 
         try {
             clientSocket.tcpNoDelay = true
-            clientSocket.sendBufferSize = 128 * 1024
-            clientSocket.receiveBufferSize = 128 * 1024
+            clientSocket.sendBufferSize = 256 * 1024
+            clientSocket.receiveBufferSize = 256 * 1024
             if (!clientAuthorizer(clientIp)) {
                 clientSocket.getOutputStream().write(
                     "HTTP/1.1 407 Proxy Authentication Required\r\nConnection: close\r\n\r\n"
@@ -150,7 +151,7 @@ class HttpProxyServer(
 
             trackClientConnection(clientIp)
             clientSocket.soTimeout = READ_TIMEOUT_MS
-            val clientIn = java.io.BufferedInputStream(clientSocket.getInputStream(), 8192)
+            val clientIn = java.io.BufferedInputStream(clientSocket.getInputStream(), 64 * 1024)
             val clientOut = clientSocket.getOutputStream()
 
             val headerLines = try {
@@ -226,22 +227,73 @@ class HttpProxyServer(
      * and uploads are preserved.
      */
     private fun readHttpHeaders(input: InputStream): List<String> {
-        val buffer = java.io.ByteArrayOutputStream()
         val maxHeaderBytes = 64 * 1024
 
+        if (input.markSupported()) {
+            input.mark(maxHeaderBytes)
+            val chunk = ByteArray(4096)
+            val headerBytes = java.io.ByteArrayOutputStream()
+            var totalRead = 0
+            var foundEnd = false
+            var p3 = -1; var p2 = -1; var p1 = -1
+
+            while (totalRead < maxHeaderBytes) {
+                val toRead = minOf(chunk.size, maxHeaderBytes - totalRead)
+                val n = input.read(chunk, 0, toRead)
+                if (n <= 0) break
+
+                for (i in 0 until n) {
+                    val b = chunk[i].toInt() and 0xFF
+                    headerBytes.write(b)
+                    if (p3 == '\r'.code && p2 == '\n'.code && p1 == '\r'.code && b == '\n'.code) {
+                        foundEnd = true
+                        totalRead += (i + 1)
+                        break
+                    }
+                    p3 = p2
+                    p2 = p1
+                    p1 = b
+                }
+
+                if (foundEnd) {
+                    // Reset input to mark and skip exactly totalRead bytes so input is positioned directly at the body
+                    input.reset()
+                    var skipped = 0L
+                    while (skipped < totalRead) {
+                        val s = input.skip(totalRead - skipped)
+                        if (s <= 0) {
+                            if (input.read() == -1) break
+                            skipped++
+                        } else {
+                            skipped += s
+                        }
+                    }
+                    break
+                } else {
+                    totalRead += n
+                }
+            }
+
+            if (headerBytes.size() == 0) return emptyList()
+            val headerText = headerBytes.toString(Charsets.ISO_8859_1.name())
+            if (!headerText.endsWith("\r\n\r\n")) {
+                throw java.io.IOException("Incomplete HTTP header block")
+            }
+            return headerText
+                .removeSuffix("\r\n\r\n")
+                .split("\r\n")
+                .filter { it.isNotEmpty() }
+        }
+
+        val buffer = java.io.ByteArrayOutputStream()
         var previous3 = -1
         var previous2 = -1
         var previous1 = -1
 
         while (buffer.size() < maxHeaderBytes) {
             val value = input.read()
-
-            if (value == -1) {
-                break
-            }
-
+            if (value == -1) break
             buffer.write(value)
-
             if (
                 previous3 == '\r'.code &&
                 previous2 == '\n'.code &&
@@ -250,31 +302,16 @@ class HttpProxyServer(
             ) {
                 break
             }
-
             previous3 = previous2
             previous2 = previous1
             previous1 = value
         }
 
-        if (buffer.size() == 0) {
-            return emptyList()
-        }
-
-        if (buffer.size() >= maxHeaderBytes) {
-            throw java.io.IOException(
-                "HTTP header block exceeds ${maxHeaderBytes} bytes"
-            )
-        }
-
-        val headerText =
-            buffer.toString(Charsets.ISO_8859_1.name())
-
+        if (buffer.size() == 0) return emptyList()
+        val headerText = buffer.toString(Charsets.ISO_8859_1.name())
         if (!headerText.endsWith("\r\n\r\n")) {
-            throw java.io.IOException(
-                "Incomplete HTTP header block"
-            )
+            throw java.io.IOException("Incomplete HTTP header block")
         }
-
         return headerText
             .removeSuffix("\r\n\r\n")
             .split("\r\n")
@@ -320,8 +357,8 @@ class HttpProxyServer(
 
                 socket.tcpNoDelay = true
                 socket.keepAlive = true
-                socket.sendBufferSize = 128 * 1024
-                socket.receiveBufferSize = 128 * 1024
+                socket.sendBufferSize = 256 * 1024
+                socket.receiveBufferSize = 256 * 1024
 
                 if (upstream != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
                     runCatching { upstream.bindSocket(socket) }
@@ -360,8 +397,8 @@ class HttpProxyServer(
                 directSocket = Socket()
                 directSocket.tcpNoDelay = true
                 directSocket.keepAlive = true
-                directSocket.sendBufferSize = 128 * 1024
-                directSocket.receiveBufferSize = 128 * 1024
+                directSocket.sendBufferSize = 256 * 1024
+                directSocket.receiveBufferSize = 256 * 1024
                 com.netfetch.app.network.NetfetchUpstreamRuntime.protect(directSocket)
                 directSocket.connect(
                     InetSocketAddress(address, port),
@@ -594,11 +631,6 @@ class HttpProxyServer(
                         output.flush()
                     }
                     recordBytes(clientIp, read.toLong(), isUpload)
-
-                    // Anti-Jam Fairness: if multiple devices are active, yield CPU cooperatively during heavy transfers
-                    if (connectedClientsMap.size > 1 && read > 16384) {
-                        Thread.yield()
-                    }
                 }
                 output.flush()
             } catch (_: Exception) {

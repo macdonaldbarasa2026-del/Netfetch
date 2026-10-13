@@ -13,7 +13,7 @@ object NetfetchBufferPool {
 
     const val DEFAULT_BUFFER_SIZE = 32 * 1024 // 32 KB per chunk
     const val BUFFER_SIZE = DEFAULT_BUFFER_SIZE
-    const val MAX_POOL_CAPACITY = 128   // Max 4 MB pooled memory
+    const val MAX_POOL_CAPACITY = 256   // Max 8 MB pooled memory
     const val MAX_BUFFERS = MAX_POOL_CAPACITY
 
     private val pool = ArrayBlockingQueue<ByteArray>(MAX_POOL_CAPACITY)

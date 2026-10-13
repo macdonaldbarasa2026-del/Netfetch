@@ -98,9 +98,10 @@ class Socks5ProxyServer(
             try {
                 serverSocket = ServerSocket().apply {
                     reuseAddress = true
-                    bind(InetSocketAddress(InetAddress.getByName("0.0.0.0"), socksPort), 512)
+                    receiveBufferSize = 256 * 1024
+                    bind(InetSocketAddress(InetAddress.getByName("0.0.0.0"), socksPort), 1024)
                 }
-                Log.i(TAG, "NetFetch SOCKS5 Server listening on port $socksPort (Anti-Jam Fair Share Active)")
+                Log.i(TAG, "NetFetch SOCKS5 Server listening on port $socksPort (High-Throughput Stream Routing Active)")
 
                 while (isRunning && serverSocket?.isClosed == false) {
                     try {
@@ -146,8 +147,8 @@ class Socks5ProxyServer(
 
         try {
             client.tcpNoDelay = true
-            client.sendBufferSize = 128 * 1024
-            client.receiveBufferSize = 128 * 1024
+            client.sendBufferSize = 256 * 1024
+            client.receiveBufferSize = 256 * 1024
             client.soTimeout = READ_TIMEOUT_MS
             val input = client.getInputStream()
             val output = client.getOutputStream()
@@ -394,8 +395,8 @@ class Socks5ProxyServer(
 
                 socket.tcpNoDelay = true
                 socket.keepAlive = true
-                socket.sendBufferSize = 128 * 1024
-                socket.receiveBufferSize = 128 * 1024
+                socket.sendBufferSize = 256 * 1024
+                socket.receiveBufferSize = 256 * 1024
 
                 if (upstream != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
                     runCatching { upstream.bindSocket(socket) }
@@ -434,8 +435,8 @@ class Socks5ProxyServer(
                 directSocket = Socket()
                 directSocket.tcpNoDelay = true
                 directSocket.keepAlive = true
-                directSocket.sendBufferSize = 128 * 1024
-                directSocket.receiveBufferSize = 128 * 1024
+                directSocket.sendBufferSize = 256 * 1024
+                directSocket.receiveBufferSize = 256 * 1024
                 com.netfetch.app.network.NetfetchUpstreamRuntime.protect(directSocket)
                 directSocket.connect(
                     InetSocketAddress(address, port),
@@ -585,11 +586,6 @@ class Socks5ProxyServer(
                     } else {
                         totalDownloadCounter.addAndGet(amount)
                         clientDownloadBytes[clientIp]?.addAndGet(amount)
-                    }
-
-                    // Anti-Jam Fairness: cooperative yield during heavy stream when multiple devices connected
-                    if (connectedClientsMap.size > 1 && read > 16384) {
-                        Thread.yield()
                     }
                 }
                 output.flush()

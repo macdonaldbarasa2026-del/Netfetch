@@ -161,6 +161,9 @@ class NetfetchTcpSessionManager(
                         while (!socket.isClosed) {
                             val data = queue.take()
                             output.write(data)
+                            if (queue.isEmpty()) {
+                                output.flush()
+                            }
                         }
                     } catch (_: Exception) {
                         /*

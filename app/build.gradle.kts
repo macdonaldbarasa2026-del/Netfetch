@@ -67,6 +67,10 @@ android {
     }
 }
 
+tasks.withType<Test>().configureEach {
+    failOnNoDiscoveredTests.set(false)
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
