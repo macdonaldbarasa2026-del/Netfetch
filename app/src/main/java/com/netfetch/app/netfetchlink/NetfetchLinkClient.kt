@@ -15,7 +15,7 @@ import java.net.Socket
 class NetfetchLinkClient {
 
     companion object {
-        private const val PORT = NetfetchLinkServer.PORT
+        const val PORT = NetfetchLinkServer.PORT
         private const val CONNECT_TIMEOUT_MS = 5_000
         private const val READ_TIMEOUT_MS = 5_000
     }
@@ -37,7 +37,8 @@ class NetfetchLinkClient {
 
     fun refreshSession(
         providerHost: String,
-        token: String
+        token: String,
+        port: Int = PORT
     ) {
         if (providerHost.isBlank()) {
             throw IOException("Provider address is missing")
@@ -48,8 +49,13 @@ class NetfetchLinkClient {
         }
 
         Socket().use { socket ->
+            if (com.netfetch.app.network.NetfetchUpstreamRuntime.isVpnProtectorActive()) {
+                if (!com.netfetch.app.network.NetfetchUpstreamRuntime.protect(socket)) {
+                    throw IOException("Unable to protect NetFetch link socket from active VPN")
+                }
+            }
             socket.connect(
-                InetSocketAddress(providerHost, PORT),
+                InetSocketAddress(providerHost, port),
                 CONNECT_TIMEOUT_MS
             )
 
@@ -85,15 +91,21 @@ class NetfetchLinkClient {
     }
 
     fun openSession(
-        providerHost: String
+        providerHost: String,
+        port: Int = PORT
     ): Session {
         if (providerHost.isBlank()) {
             throw IOException("Provider address is missing")
         }
 
         Socket().use { socket ->
+            if (com.netfetch.app.network.NetfetchUpstreamRuntime.isVpnProtectorActive()) {
+                if (!com.netfetch.app.network.NetfetchUpstreamRuntime.protect(socket)) {
+                    throw IOException("Unable to protect NetFetch link socket from active VPN")
+                }
+            }
             socket.connect(
-                InetSocketAddress(providerHost, PORT),
+                InetSocketAddress(providerHost, port),
                 CONNECT_TIMEOUT_MS
             )
 

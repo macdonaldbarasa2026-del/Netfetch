@@ -1,7 +1,12 @@
 package com.netfetch.app.netfetchlink
 
 import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.net.ConnectivityManager
+import android.net.wifi.WpsInfo
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pManager
 import android.os.Handler
@@ -33,7 +38,7 @@ class NetfetchReceiverLink(
         private const val TAG = "NetFetchReceiverLink"
 
         private const val CONNECTION_INFO_RETRY_MS = 500L
-        private const val MAX_CONNECTION_INFO_ATTEMPTS = 15
+        private const val MAX_CONNECTION_INFO_ATTEMPTS = 50 // 25s for P2P negotiation & DHCP
 
         private const val RECONNECT_DELAY_MS = 2_000L
         private const val CONNECTION_MONITOR_INTERVAL_MS = 2_000L
@@ -69,6 +74,15 @@ class NetfetchReceiverLink(
 
     @Volatile
     private var connected = false
+
+    @Volatile
+    private var isDirectConnection = false
+
+    private var directGatewayIp: String = "192.168.49.1"
+    private var directSocksPort: Int = 1080
+    private var directHttpPort: Int = 8282
+
+    private var p2pBroadcastReceiver: BroadcastReceiver? = null
 
     @Volatile
     private var activeSessionToken: String? = null
@@ -136,6 +150,10 @@ class NetfetchReceiverLink(
     fun connectDirect(gatewayIp: String = "192.168.49.1", socksPort: Int = 1080, httpPort: Int = 8282) {
         stopInternal(removeGroup = false)
         stopped = false
+        isDirectConnection = true
+        directGatewayIp = gatewayIp
+        directSocksPort = socksPort
+        directHttpPort = httpPort
         connecting = true
         connected = false
         reconnectScheduled.set(false)
@@ -148,7 +166,33 @@ class NetfetchReceiverLink(
                     val session = try {
                         NetfetchLinkClient().openSession(providerHost = gatewayIp)
                     } catch (e: Exception) {
-                        Log.w(TAG, "Link server handshake not responding on :8284, using direct gateway fallback: ${e.message}")
+                        Log.w(TAG, "Link server handshake not responding on :8290, verifying direct gateway reachability: ${e.message}")
+                        val canReachProxy = try {
+                            java.net.Socket().use { probe ->
+                                if (com.netfetch.app.network.NetfetchUpstreamRuntime.isVpnProtectorActive()) {
+                                    com.netfetch.app.network.NetfetchUpstreamRuntime.protect(probe)
+                                }
+                                probe.connect(java.net.InetSocketAddress(gatewayIp, socksPort), 2000)
+                                true
+                            }
+                        } catch (_: Exception) {
+                            try {
+                                java.net.Socket().use { probe ->
+                                    if (com.netfetch.app.network.NetfetchUpstreamRuntime.isVpnProtectorActive()) {
+                                        com.netfetch.app.network.NetfetchUpstreamRuntime.protect(probe)
+                                    }
+                                    probe.connect(java.net.InetSocketAddress(gatewayIp, httpPort), 2000)
+                                    true
+                                }
+                            } catch (_: Exception) {
+                                false
+                            }
+                        }
+
+                        if (!canReachProxy) {
+                            throw java.io.IOException("Gateway $gatewayIp is not responding on link (:8290), SOCKS5 (:$socksPort), or HTTP (:$httpPort): host unreachable")
+                        }
+
                         NetfetchLinkClient.Session(
                             token = "direct-token",
                             mode = requestedMode(),
@@ -208,6 +252,7 @@ class NetfetchReceiverLink(
     private fun searchForProvider() {
         if (stopped) return
 
+        isDirectConnection = false
         connecting = false
 
         onStateChanged(NetfetchReceiverState.Searching)
@@ -257,6 +302,10 @@ class NetfetchReceiverLink(
 
         onStateChanged(NetfetchReceiverState.Connecting)
 
+        // Stop active DNS-SD discovery to prevent radio scanning channel conflicts during P2P negotiation
+        discovery?.stop()
+        discovery = null
+
         val wifiManager = manager
         val p2pChannel = channel
 
@@ -265,9 +314,38 @@ class NetfetchReceiverLink(
             return
         }
 
+        // Register broadcast receiver to catch OS-level group formation immediately
+        if (p2pBroadcastReceiver == null) {
+            p2pBroadcastReceiver = object : BroadcastReceiver() {
+                override fun onReceive(ctx: Context?, intent: Intent?) {
+                    if (stopped || connected) return
+                    if (intent?.action == WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION) {
+                        val currentChannel = channel ?: return
+                        wifiManager.requestConnectionInfo(currentChannel) { info ->
+                            if (!stopped && !connected && info.groupFormed && info.groupOwnerAddress != null) {
+                                val address = info.groupOwnerAddress?.hostAddress
+                                if (!address.isNullOrBlank() && !connected) {
+                                    Log.i(TAG, "Wi-Fi Direct connection established via broadcast: $address")
+                                    openProviderSession(provider, address)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            val filter = IntentFilter(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(p2pBroadcastReceiver, filter, Context.RECEIVER_EXPORTED)
+            } else {
+                context.registerReceiver(p2pBroadcastReceiver, filter)
+            }
+        }
+
         val config =
             WifiP2pConfig().apply {
                 deviceAddress = provider.device.deviceAddress
+                groupOwnerIntent = 0 // Explicitly remain client; provider is autonomous group owner
+                wps.setup = WpsInfo.PBC
             }
 
         wifiManager.connect(
@@ -452,7 +530,11 @@ class NetfetchReceiverLink(
                 reconnectScheduled.set(false)
 
                 if (!stopped) {
-                    searchForProvider()
+                    if (isDirectConnection) {
+                        connectDirect(directGatewayIp, directSocksPort, directHttpPort)
+                    } else {
+                        searchForProvider()
+                    }
                 }
             },
             retryDelay
@@ -462,6 +544,11 @@ class NetfetchReceiverLink(
     private fun refreshSession() {
         val providerAddress = activeProviderAddress ?: return
         val token = activeSessionToken ?: return
+
+        // Skip token refresh if session is running on direct-token fallback
+        if (token == "direct-token") {
+            return
+        }
 
         Thread({
             if (stopped || !connected) return@Thread
@@ -497,6 +584,36 @@ class NetfetchReceiverLink(
     private fun checkConnection() {
         if (stopped || !connected) return
 
+        if (isDirectConnection) {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            if (cm?.activeNetwork == null) {
+                scheduleReconnect("Local network connection was lost.")
+                return
+            }
+
+            val targetIp = directGatewayIp
+            val targetPort = directSocksPort
+            Thread({
+                try {
+                    val probe = java.net.Socket()
+                    if (com.netfetch.app.network.NetfetchUpstreamRuntime.isVpnProtectorActive()) {
+                        com.netfetch.app.network.NetfetchUpstreamRuntime.protect(probe)
+                    }
+                    probe.connect(java.net.InetSocketAddress(targetIp, targetPort), 2000)
+                    probe.close()
+                } catch (e: Exception) {
+                    if (!stopped && connected) {
+                        mainHandler.post {
+                            if (!stopped && connected) {
+                                scheduleReconnect("NetFetch provider $targetIp:$targetPort became unreachable: ${e.message}")
+                            }
+                        }
+                    }
+                }
+            }, "NetFetch-DirectProbe").apply { isDaemon = true }.start()
+            return
+        }
+
         val wifiManager = manager
         val p2pChannel = channel
 
@@ -506,7 +623,7 @@ class NetfetchReceiverLink(
         }
 
         wifiManager.requestConnectionInfo(p2pChannel) { info ->
-            if (stopped || !connected) return@requestConnectionInfo
+            if (stopped || !connected || isDirectConnection) return@requestConnectionInfo
 
             val ownerAddress = info.groupOwnerAddress?.hostAddress
 
@@ -530,6 +647,13 @@ class NetfetchReceiverLink(
         reconnectScheduled.set(false)
 
         mainHandler.removeCallbacksAndMessages(null)
+
+        try {
+            p2pBroadcastReceiver?.let {
+                context.unregisterReceiver(it)
+            }
+        } catch (_: Exception) {}
+        p2pBroadcastReceiver = null
 
         discovery?.stop()
         discovery = null

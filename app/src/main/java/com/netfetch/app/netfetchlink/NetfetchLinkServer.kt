@@ -36,7 +36,8 @@ class NetfetchLinkServer(
     private val mode: String,
     private val socksPort: Int = NetfetchLinkProtocol.DEFAULT_SOCKS_PORT,
     private val httpPort: Int = NetfetchLinkProtocol.DEFAULT_HTTP_PORT,
-    private val pacPort: Int = NetfetchLinkProtocol.DEFAULT_PAC_PORT
+    private val pacPort: Int = NetfetchLinkProtocol.DEFAULT_PAC_PORT,
+    val port: Int = PORT
 ) {
     companion object {
         private const val TAG = "NetFetchLinkServer"
@@ -87,7 +88,7 @@ class NetfetchLinkServer(
 
     private fun runServer() {
         try {
-            ServerSocket(PORT).use { server ->
+            ServerSocket(port).use { server ->
                 serverSocket = server
 
                 while (running.get()) {
@@ -173,6 +174,7 @@ class NetfetchLinkServer(
     }
 
     private fun createToken(clientAddress: String): String {
+        val normClient = normalizeIp(clientAddress)
         val bytes = ByteArray(TOKEN_BYTES)
         random.nextBytes(bytes)
 
@@ -182,7 +184,7 @@ class NetfetchLinkServer(
 
         sessions[token] = Session(
             token = token,
-            clientAddress = clientAddress,
+            clientAddress = normClient,
             expiresAt = System.currentTimeMillis() + TOKEN_TTL_MS
         )
 

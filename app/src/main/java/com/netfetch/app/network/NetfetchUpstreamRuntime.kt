@@ -86,8 +86,11 @@ object NetfetchUpstreamRuntime {
         datagramSocketProtector = protector
     }
 
+    fun isVpnProtectorActive(): Boolean = socketProtector != null
+
     fun protect(socket: java.net.Socket): Boolean {
-        return socketProtector?.invoke(socket) ?: true
+        val protector = socketProtector ?: return true
+        return protector.invoke(socket)
     }
 
     fun protect(socket: java.net.DatagramSocket): Boolean {

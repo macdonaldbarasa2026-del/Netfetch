@@ -166,9 +166,12 @@ class Socks5ProxyServer(
             val methods = ByteArray(nMethods)
             readFully(input, methods)
 
-            val isLocalHotspotClient = clientIp.startsWith("192.168.") ||
-                    clientIp.startsWith("10.") ||
-                    clientIp == "127.0.0.1"
+            val cleanIp = clientIp.removePrefix("::ffff:").substringBefore("%").trim()
+            val isLocalHotspotClient = cleanIp.startsWith("192.168.") ||
+                    cleanIp.startsWith("10.") ||
+                    cleanIp == "127.0.0.1" ||
+                    cleanIp == "::1" ||
+                    (cleanIp.startsWith("172.") && cleanIp.substringAfter("172.").substringBefore(".").toIntOrNull() in 16..31)
 
             val clientOffersNoAuth = methods.any { (it.toInt() and 0xFF) == AUTH_NO_AUTH }
             val clientOffersUserPass = methods.any { (it.toInt() and 0xFF) == AUTH_USERNAME_PASSWORD }

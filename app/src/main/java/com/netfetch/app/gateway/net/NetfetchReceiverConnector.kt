@@ -37,13 +37,27 @@ class NetfetchReceiverConnector(
             throw IOException("Invalid NetFetch provider SOCKS port")
         }
 
+        val destHost = destination.hostAddress
+            ?: throw IOException("Invalid destination address")
+
+        // If the destination is the provider host itself (e.g. link handshake, PAC or HTTP proxy port),
+        // connect directly using a protected socket rather than routing through upstream SOCKS5.
+        if (destHost == providerHost || destHost == "127.0.0.1") {
+            val socket = Socket()
+            if (!vpnService.protect(socket)) {
+                throw IOException("Unable to protect direct provider connection")
+            }
+            socket.tcpNoDelay = true
+            socket.connect(java.net.InetSocketAddress(destination, port), timeoutMs)
+            return socket
+        }
+
         return socksClient.connect(
             proxyHost = providerHost,
             proxyPort = providerPort,
             username = username,
             password = password,
-            destinationHost = destination.hostAddress
-                ?: throw IOException("Invalid destination address"),
+            destinationHost = destHost,
             destinationPort = port
         )
     }

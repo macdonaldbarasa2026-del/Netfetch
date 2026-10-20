@@ -140,6 +140,12 @@ class NetfetchReceiverVpnService : VpnService() {
                     .addDnsServer("1.1.1.1")
                     .addDnsServer("8.8.8.8")
 
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                runCatching {
+                    builder.excludeRoute(android.net.IpPrefix(java.net.InetAddress.getByName(providerHost), 32))
+                }
+            }
+
             tunInterface =
                 builder.establish()
                     ?: throw IllegalStateException(
@@ -171,6 +177,14 @@ class NetfetchReceiverVpnService : VpnService() {
 
             tunEngine = engine
             running = true
+
+            com.netfetch.app.network.NetfetchUpstreamRuntime.setSocketProtector { socket ->
+                protect(socket)
+            }
+            com.netfetch.app.network.NetfetchUpstreamRuntime.setDatagramSocketProtector { socket ->
+                protect(socket)
+            }
+
             engine.start()
 
             Log.i(
@@ -242,6 +256,9 @@ class NetfetchReceiverVpnService : VpnService() {
             TAG,
             "Stopping NetFetch receiver VPN"
         )
+
+        com.netfetch.app.network.NetfetchUpstreamRuntime.setSocketProtector(null)
+        com.netfetch.app.network.NetfetchUpstreamRuntime.setDatagramSocketProtector(null)
 
         runCatching {
             tunEngine?.stop()

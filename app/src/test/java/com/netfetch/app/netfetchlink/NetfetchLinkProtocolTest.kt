@@ -33,6 +33,59 @@ class NetfetchLinkProtocolTest {
         // Non-existent token fails
         assertFalse(server.validateSession("non-existent-token", "192.168.49.2"))
         assertFalse(server.isClientAuthorized("192.168.49.2"))
+
+        // Create token for client address
+        val createTokenMethod = NetfetchLinkServer::class.java.getDeclaredMethod("createToken", String::class.java)
+        createTokenMethod.isAccessible = true
+        val token = createTokenMethod.invoke(server, "192.168.49.2") as String
+        assertEquals(64, token.length)
+
+        // Validate with exact address
+        assertTrue(server.validateSession(token, "192.168.49.2"))
+        assertTrue(server.isClientAuthorized("192.168.49.2"))
+
+        // Validate with IPv4-mapped IPv6 address (dual-stack socket format)
+        assertTrue(server.validateSession(token, "::ffff:192.168.49.2"))
+        assertTrue(server.isClientAuthorized("::ffff:192.168.49.2"))
+
+        // Reject different client address
+        assertFalse(server.validateSession(token, "192.168.49.9"))
+    }
+
+    @Test
+    fun testClientServerEndToEndHandshakeAndRefresh() {
+        val testPort = java.net.ServerSocket(0).use { it.localPort }
+        val server = NetfetchLinkServer(
+            mode = NetfetchLinkProtocol.MODE_PRO,
+            socksPort = 1080,
+            httpPort = 8282,
+            pacPort = 8283,
+            port = testPort
+        )
+        server.start()
+
+        try {
+            // Allow server thread to bind
+            Thread.sleep(150)
+
+            val client = NetfetchLinkClient()
+            val session = client.openSession("127.0.0.1", port = testPort)
+
+            assertEquals(64, session.token.length)
+            assertEquals(NetfetchLinkProtocol.MODE_PRO, session.mode)
+            assertEquals(8282, session.httpPort)
+            assertEquals(8283, session.pacPort)
+            assertEquals(1080, session.socksPort)
+
+            assertTrue(server.validateSession(session.token, "127.0.0.1"))
+            assertTrue(server.validateSession(session.token, "::ffff:127.0.0.1"))
+
+            // Refresh session
+            client.refreshSession("127.0.0.1", session.token, port = testPort)
+            assertTrue(server.validateSession(session.token, "127.0.0.1"))
+        } finally {
+            server.stop()
+        }
     }
 
     @Test

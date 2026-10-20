@@ -262,9 +262,12 @@ class HotspotService : Service() {
             username = config.socksUsername,
             password = config.socksPassword,
             sessionValidator = { token, address ->
+                val cleanAddr = address.removePrefix("::ffff:").substringBefore("%").trim()
                 // Allow all local hotspot clients or validated NetFetch sessions
-                address.startsWith("192.168.") || address.startsWith("10.") || address == "127.0.0.1" ||
-                    linkServer?.validateSession(token, address) == true
+                cleanAddr.startsWith("192.168.") || cleanAddr.startsWith("10.") || cleanAddr == "127.0.0.1" || cleanAddr == "::1" ||
+                    (cleanAddr.startsWith("172.") && cleanAddr.substringAfter("172.").substringBefore(".").toIntOrNull() in 16..31) ||
+                    linkServer?.validateSession(token, address) == true ||
+                    linkServer?.validateSession(token, cleanAddr) == true
             },
             upstreamNetworkProvider = { NetfetchUpstreamRuntime.currentNetwork() },
             onClientActivity = { clientsMap ->
