@@ -49,4 +49,24 @@ class NetfetchBufferPoolTest {
         assertEquals(NetfetchBufferPool.BUFFER_SIZE, buffer.size)
         NetfetchBufferPool.release(buffer)
     }
+
+    @Test
+    fun testTotalEverAllocatedAndClear() {
+        NetfetchBufferPool.clear()
+        assertEquals(0, NetfetchBufferPool.totalEverAllocated)
+        assertEquals(0, NetfetchBufferPool.totalAllocated)
+
+        val buf = NetfetchBufferPool.acquire()
+        assertEquals(1, NetfetchBufferPool.totalEverAllocated)
+        NetfetchBufferPool.release(buf)
+
+        // Acquiring again should reuse the pooled buffer without allocating
+        val buf2 = NetfetchBufferPool.acquire()
+        assertEquals(1, NetfetchBufferPool.totalEverAllocated)
+        NetfetchBufferPool.release(buf2)
+
+        NetfetchBufferPool.clear()
+        assertEquals(0, NetfetchBufferPool.pooledCount)
+        assertEquals(0, NetfetchBufferPool.totalEverAllocated)
+    }
 }

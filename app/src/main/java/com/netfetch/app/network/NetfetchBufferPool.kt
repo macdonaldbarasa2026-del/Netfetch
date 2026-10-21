@@ -57,10 +57,21 @@ object NetfetchBufferPool {
     val pooledCount: Int
         get() = pool.size
 
-    val totalAllocated: Int
+    /**
+     * Cumulative count of heap buffer allocations performed when the pool was empty or
+     * when a non-standard size was requested.
+     */
+    val totalEverAllocated: Int
         get() = allocatedCount.get()
+
+    /**
+     * Alias for [totalEverAllocated] representing cumulative heap buffer allocations.
+     */
+    val totalAllocated: Int
+        get() = totalEverAllocated
 
     fun clear() {
         pool.clear()
+        allocatedCount.set(0)
     }
 }
