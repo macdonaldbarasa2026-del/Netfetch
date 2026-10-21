@@ -29,12 +29,6 @@ class NetfetchTcpSessionManager(
     private companion object {
         const val WRITE_QUEUE_CAPACITY = 256
         const val SOCKET_BUFFER_SIZE = 256 * 1024
-        /**
-         * Micro-wait bound when write queue is momentarily full.
-         * Must remain tiny (<=1ms) so the TUN packet processing thread
-         * is never blocked under lock.
-         */
-        const val WRITE_OFFER_TIMEOUT_MS = 1L
     }
 
     private class Session(
@@ -256,27 +250,12 @@ class NetfetchTcpSessionManager(
                 ?: return false
 
         /*
-         * Prefer a non-blocking offer first (fast path for the common case).
-         *
-         * If the queue is momentarily full — e.g. the upstream socket is
-         * briefly behind — wait up to WRITE_OFFER_TIMEOUT_MS before giving
-         * up. This absorbs micro-bursts without immediately tearing down the
-         * session. Only a persistent stall (upstream truly stuck) will close.
-         *
-         * Never call socket.write() here: that would block the TUN reader
-         * thread and stall every other active flow.
+         * Pure non-blocking offer:
+         * Never block while holding NetfetchTcpEngine's synchronized lock.
+         * If the upstream write queue is full, return false immediately so
+         * backpressure can be handled without stalling other flows.
          */
-        if (session.writeQueue.offer(data)) {
-            return true
-        }
-
-        val accepted = try {
-            session.writeQueue.offer(data, WRITE_OFFER_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
-        } catch (_: InterruptedException) {
-            Thread.currentThread().interrupt()
-            false
-        }
-
+        val accepted = session.writeQueue.offer(data)
         if (!accepted) {
             close(key)
             return false
