@@ -27,7 +27,9 @@ class NetfetchSocks5Client(
         username: String,
         password: String,
         destinationHost: String,
-        destinationPort: Int
+        destinationPort: Int,
+        connectTimeoutMs: Int = CONNECT_TIMEOUT_MS,
+        soTimeoutMs: Int = SO_TIMEOUT_MS
     ): Socket {
 
         val socket = Socket()
@@ -52,10 +54,10 @@ class NetfetchSocks5Client(
                     proxyHost,
                     proxyPort
                 ),
-                CONNECT_TIMEOUT_MS
+                connectTimeoutMs
             )
 
-            socket.soTimeout = SO_TIMEOUT_MS
+            socket.soTimeout = soTimeoutMs
 
             val input = socket.getInputStream()
             val output = socket.getOutputStream()

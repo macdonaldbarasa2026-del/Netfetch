@@ -46,9 +46,15 @@ class NetfetchTunEngine(
         )
 
     private val dnsExecutor =
-        java.util.concurrent.Executors.newFixedThreadPool(16) { r ->
-            Thread(r, "Netfetch-DnsResolver").apply { isDaemon = true }
-        }
+        java.util.concurrent.ThreadPoolExecutor(
+            4,
+            16,
+            60L,
+            java.util.concurrent.TimeUnit.SECONDS,
+            java.util.concurrent.ArrayBlockingQueue<Runnable>(64),
+            { r -> Thread(r, "Netfetch-DnsResolver").apply { isDaemon = true } },
+            java.util.concurrent.ThreadPoolExecutor.AbortPolicy()
+        )
 
     fun start() {
         if (!running.compareAndSet(false, true)) {
@@ -164,20 +170,24 @@ class NetfetchTunEngine(
                         val queryPayload = packet.copyOfRange(payloadOffset, payloadOffset + payloadLength)
                         val dnsDest = PacketCodec.ipv4Address(ip.destinationIp)
 
-                        dnsExecutor.execute {
-                            val response = connector.resolveDns(dnsDest, queryPayload)
-                            if (response != null) {
-                                val replyPacket = PacketCodec.ipv4Udp(
-                                    sourceIp = ip.destinationIp,
-                                    destinationIp = ip.sourceIp,
-                                    sourcePort = udp.destinationPort,
-                                    destinationPort = udp.sourcePort,
-                                    payload = response
-                                )
-                                enqueue(replyPacket)
-                            } else {
-                                udpEngine.handle(packet, ip, udp)
+                        try {
+                            dnsExecutor.execute {
+                                val response = connector.resolveDns(dnsDest, queryPayload)
+                                if (response != null) {
+                                    val replyPacket = PacketCodec.ipv4Udp(
+                                        sourceIp = ip.destinationIp,
+                                        destinationIp = ip.sourceIp,
+                                        sourcePort = udp.destinationPort,
+                                        destinationPort = udp.sourcePort,
+                                        payload = response
+                                    )
+                                    enqueue(replyPacket)
+                                } else {
+                                    udpEngine.handle(packet, ip, udp)
+                                }
                             }
+                        } catch (_: java.util.concurrent.RejectedExecutionException) {
+                            udpEngine.handle(packet, ip, udp)
                         }
                         return
                     }

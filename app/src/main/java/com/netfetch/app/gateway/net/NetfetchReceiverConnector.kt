@@ -144,9 +144,11 @@ class NetfetchReceiverConnector(
                 username = username,
                 password = password,
                 destinationHost = dnsServerIp,
-                destinationPort = 53
+                destinationPort = 53,
+                connectTimeoutMs = 1500,
+                soTimeoutMs = 1500
             )
-            socket.soTimeout = 2000
+            socket.soTimeout = 1500
             val out = socket.getOutputStream()
             out.write((queryData.size shr 8) and 0xFF)
             out.write(queryData.size and 0xFF)
