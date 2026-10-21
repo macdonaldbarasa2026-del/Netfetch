@@ -193,19 +193,9 @@ class UpstreamNetworkManager(private val context: Context) {
                     }
                 }
 
-                Log.d(
-                    TAG,
-                    "Capabilities changed: $network " +
-                        "type=$type " +
-                        "internet=" +
-                        caps.hasCapability(
-                            NetworkCapabilities.NET_CAPABILITY_INTERNET
-                        ) +
-                        "validated=" +
-                        caps.hasCapability(
-                            NetworkCapabilities.NET_CAPABILITY_VALIDATED
-                        )
-                )
+                val internet = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                val validated = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                Log.d(TAG, "Capabilities changed: $network type=$type internet=$internet validated=$validated")
 
                 requestReselect()
             }
