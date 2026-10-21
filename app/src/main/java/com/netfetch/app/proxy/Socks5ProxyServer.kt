@@ -51,7 +51,7 @@ class Socks5ProxyServer(
                 isDaemon = true
             }
         },
-        java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy()
+        java.util.concurrent.ThreadPoolExecutor.AbortPolicy()
     )
     private val proxyDispatcher = socksExecutor.asCoroutineDispatcher()
     private val proxyScope = CoroutineScope(proxyDispatcher + SupervisorJob())
@@ -106,17 +106,23 @@ class Socks5ProxyServer(
                 while (isRunning && serverSocket?.isClosed == false) {
                     try {
                         val client = serverSocket?.accept() ?: break
-                        proxyScope.launch {
-                            if (!clientSemaphore.tryAcquire()) {
-                                Log.w(TAG, "SOCKS5 client concurrency limit reached; rejecting connection")
-                                runCatching { client.close() }
-                                return@launch
+                        if (!clientSemaphore.tryAcquire()) {
+                            Log.w(TAG, "SOCKS5 client concurrency limit reached; rejecting connection")
+                            runCatching { client.close() }
+                            continue
+                        }
+                        try {
+                            proxyScope.launch {
+                                try {
+                                    handleSocksClient(client)
+                                } finally {
+                                    clientSemaphore.release()
+                                }
                             }
-                            try {
-                                handleSocksClient(client)
-                            } finally {
-                                clientSemaphore.release()
-                            }
+                        } catch (e: java.util.concurrent.RejectedExecutionException) {
+                            Log.w(TAG, "SOCKS5 proxy executor saturated; rejecting connection")
+                            clientSemaphore.release()
+                            runCatching { client.close() }
                         }
                     } catch (e: Exception) {
                         if (isRunning) Log.e(TAG, "Error accepting SOCKS5 connection: ${e.message}")

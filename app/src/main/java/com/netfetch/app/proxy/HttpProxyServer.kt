@@ -49,7 +49,7 @@ class HttpProxyServer(
                 isDaemon = true
             }
         },
-        java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy()
+        java.util.concurrent.ThreadPoolExecutor.AbortPolicy()
     )
     private val proxyDispatcher = proxyExecutor.asCoroutineDispatcher()
     private val proxyScope = CoroutineScope(proxyDispatcher + SupervisorJob())
@@ -102,12 +102,18 @@ class HttpProxyServer(
                             runCatching { clientSocket.close() }
                             continue
                         }
-                        proxyScope.launch {
-                            try {
-                                handleClientSocket(clientSocket)
-                            } finally {
-                                clientSemaphore.release()
+                        try {
+                            proxyScope.launch {
+                                try {
+                                    handleClientSocket(clientSocket)
+                                } finally {
+                                    clientSemaphore.release()
+                                }
                             }
+                        } catch (e: java.util.concurrent.RejectedExecutionException) {
+                            Log.w(TAG, "HTTP proxy executor saturated; rejecting connection")
+                            clientSemaphore.release()
+                            runCatching { clientSocket.close() }
                         }
                     } catch (e: Exception) {
                         if (isRunning) {
