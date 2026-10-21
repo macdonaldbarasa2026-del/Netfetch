@@ -7,6 +7,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import java.net.InetAddress
 import java.net.Socket
 import java.util.concurrent.ArrayBlockingQueue
@@ -293,6 +295,17 @@ class NetfetchTcpSessionManager(
         sessions.keys
             .toList()
             .forEach(::close)
+
+        // Cancel and join children before cancelling root scope and shutting down executor
+        val rootJob = scope.coroutineContext[Job]
+        val children = rootJob?.children?.toList() ?: emptyList()
+        children.forEach { it.cancel() }
+
+        runBlocking {
+            withTimeoutOrNull(2000L) {
+                children.forEach { runCatching { it.join() } }
+            }
+        }
 
         scope.cancel()
         runCatching { sessionExecutor.shutdownNow() }
