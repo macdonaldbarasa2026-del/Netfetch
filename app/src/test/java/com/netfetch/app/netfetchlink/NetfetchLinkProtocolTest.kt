@@ -122,4 +122,25 @@ class NetfetchLinkProtocolTest {
             throw e.targetException
         }
     }
+
+    @Test
+    fun testCleanupExpiredSessions() {
+        val server = NetfetchLinkServer(NetfetchLinkProtocol.MODE_NORMAL)
+        val createTokenMethod = NetfetchLinkServer::class.java.getDeclaredMethod("createToken", String::class.java)
+        createTokenMethod.isAccessible = true
+        val token = createTokenMethod.invoke(server, "192.168.49.2") as String
+        assertTrue(server.validateSession(token, "192.168.49.2"))
+
+        val sessionsField = NetfetchLinkServer::class.java.getDeclaredField("sessions")
+        sessionsField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val sessions = sessionsField.get(server) as java.util.concurrent.ConcurrentHashMap<String, Any>
+        val sessionObj = sessions[token]!!
+        val expiresAtField = sessionObj.javaClass.getDeclaredField("expiresAt")
+        expiresAtField.isAccessible = true
+        expiresAtField.setLong(sessionObj, System.currentTimeMillis() - 1000L)
+
+        server.cleanupExpiredSessions()
+        assertFalse(server.validateSession(token, "192.168.49.2"))
+    }
 }

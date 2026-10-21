@@ -44,6 +44,7 @@ class NetfetchLinkServer(
         const val PORT = 8290
         private const val TOKEN_BYTES = 32
         private const val TOKEN_TTL_MS = 86_400_000L // 24 hours
+        private const val CLEANUP_INTERVAL_MS = 60_000L
 
         /** Maximum simultaneously active link-handshake threads. */
         private const val HANDLER_THREADS = 8
@@ -58,6 +59,8 @@ class NetfetchLinkServer(
     private val running = AtomicBoolean(false)
     private val random = SecureRandom()
     private val sessions = ConcurrentHashMap<String, Session>()
+    @Volatile
+    private var lastCleanupAt = 0L
 
     @Volatile
     private var serverSocket: ServerSocket? = null
@@ -92,7 +95,7 @@ class NetfetchLinkServer(
                 serverSocket = server
 
                 while (running.get()) {
-                    cleanupExpiredSessions()
+                    maybeCleanupExpiredSessions()
 
                     val socket = try {
                         server.accept()
@@ -234,7 +237,15 @@ class NetfetchLinkServer(
         }
     }
 
-    private fun cleanupExpiredSessions() {
+    private fun maybeCleanupExpiredSessions() {
+        val now = System.currentTimeMillis()
+        if (now - lastCleanupAt >= CLEANUP_INTERVAL_MS) {
+            lastCleanupAt = now
+            cleanupExpiredSessions()
+        }
+    }
+
+    internal fun cleanupExpiredSessions() {
         val now = System.currentTimeMillis()
         sessions.entries.removeIf { now > it.value.expiresAt }
     }
