@@ -260,16 +260,19 @@ class NetfetchReceiverVpnService : VpnService() {
         com.netfetch.app.network.NetfetchUpstreamRuntime.setSocketProtector(null)
         com.netfetch.app.network.NetfetchUpstreamRuntime.setDatagramSocketProtector(null)
 
-        runCatching {
-            tunEngine?.stop()
-        }
-
+        val engine = tunEngine
         tunEngine = null
-
         runCatching {
-            tunInterface?.close()
+            engine?.stop()
         }
 
+        // NetfetchTunEngine.stop() owns closing tunInterface when engine is present.
+        // Only close directly if engine was never created, preventing double-close.
+        if (engine == null) {
+            runCatching {
+                tunInterface?.close()
+            }
+        }
         tunInterface = null
     }
 
