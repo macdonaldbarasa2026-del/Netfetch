@@ -90,4 +90,14 @@ class NetfetchDnsEngineTest {
             NetfetchDnsEngine.resolve(invalidHost)
         }
     }
+
+    @Test
+    fun testInFlightLocksCleanedUp() {
+        assertEquals(0, NetfetchDnsEngine.inFlightLocksCount())
+        try {
+            NetfetchDnsEngine.resolve("test-unknown-host.nonexistent.example")
+        } catch (_: UnknownHostException) {}
+        // After resolution completes (even on failure), in-flight lock must be cleaned up
+        assertEquals(0, NetfetchDnsEngine.inFlightLocksCount())
+    }
 }

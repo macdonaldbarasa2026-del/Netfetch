@@ -33,9 +33,13 @@ object NetfetchDnsEngine {
         val boundNetwork: Network? = null
     )
 
+    private class RefCountLock {
+        var count = 0
+    }
+
     private val cache = ConcurrentHashMap<String, CachedDnsRecord>()
     private val negativeCache = ConcurrentHashMap<String, Long>()
-    private val inFlightLocks = ConcurrentHashMap<String, Any>()
+    private val inFlightLocks = ConcurrentHashMap<String, RefCountLock>()
 
     init {
         seedWellKnownHosts()
@@ -96,7 +100,9 @@ object NetfetchDnsEngine {
         val startTime = System.currentTimeMillis()
 
         // 4. In-flight coalescing: only 1 thread resolves the same host concurrently
-        val lock = inFlightLocks.computeIfAbsent(trimmedHost) { Any() }
+        val lock = inFlightLocks.compute(trimmedHost) { _, existing ->
+            (existing ?: RefCountLock()).apply { count++ }
+        }!!
         synchronized(lock) {
             // Re-check hot cache under lock
             val recheck = cache[trimmedHost]
@@ -153,7 +159,13 @@ object NetfetchDnsEngine {
                 NetfetchDiagnostics.recordDnsLookup(duration, isCacheHit = false)
                 throw UnknownHostException("NetFetch DNS Engine could not resolve: $trimmedHost")
             } finally {
-                inFlightLocks.remove(trimmedHost, lock)
+                inFlightLocks.compute(trimmedHost) { _, current ->
+                    if (current == null) null
+                    else {
+                        current.count--
+                        if (current.count <= 0) null else current
+                    }
+                }
             }
         }
     }
@@ -225,9 +237,12 @@ object NetfetchDnsEngine {
     fun clearCache() {
         cache.clear()
         negativeCache.clear()
+        inFlightLocks.clear()
         seedWellKnownHosts()
         Log.i(TAG, "DNS cache cleared")
     }
 
     fun cachedEntriesCount(): Int = cache.size
+
+    fun inFlightLocksCount(): Int = inFlightLocks.size
 }
