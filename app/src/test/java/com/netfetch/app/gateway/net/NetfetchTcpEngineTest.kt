@@ -95,4 +95,31 @@ class NetfetchTcpEngineTest {
 
         engine.shutdown()
     }
+
+    @Test
+    fun testComputedHeaderLengthParsing() {
+        val ipPacket = PacketCodec.ipv4Tcp(
+            sourceIp = 0x7f000001,
+            destinationIp = 0x7f000002,
+            sourcePort = 80,
+            destinationPort = 1234,
+            sequence = 1000L,
+            acknowledgement = 2000L,
+            flags = TcpHeader.ACK,
+            window = 65535,
+            payload = byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8)
+        )
+
+        val ip = Ipv4Header.parse(ipPacket, ipPacket.size)
+        assertNotNull(ip)
+        assertEquals(20, ip!!.headerLength)
+
+        val tcp = TcpHeader.parse(ipPacket, ip.headerLength, ipPacket.size - ip.headerLength)
+        assertNotNull(tcp)
+        assertEquals(20, tcp!!.dataOffset)
+
+        val computedHeaderLen = ip.headerLength + tcp.dataOffset
+        assertEquals(40, computedHeaderLen)
+        assertEquals(8, ipPacket.size - computedHeaderLen)
+    }
 }

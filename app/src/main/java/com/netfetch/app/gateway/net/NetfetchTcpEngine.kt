@@ -672,8 +672,15 @@ class NetfetchTcpEngine(
                 continue
             }
 
+            val ipHeader = Ipv4Header.parse(segment.packet, segment.packet.size)
+            val ipHeaderLength = ipHeader?.headerLength ?: 20
+            val tcpHeader = if (ipHeader != null) {
+                TcpHeader.parse(segment.packet, ipHeaderLength, segment.packet.size - ipHeaderLength)
+            } else null
+            val headerLength = ipHeaderLength + (tcpHeader?.dataOffset ?: 20)
+
             val originalPayloadLength =
-                (segment.packet.size - 40).coerceAtLeast(0)
+                (segment.packet.size - headerLength).coerceAtLeast(0)
 
             if (originalPayloadLength <= 0) {
                 break
@@ -687,7 +694,7 @@ class NetfetchTcpEngine(
 
             val remainingPayload =
                 segment.packet.copyOfRange(
-                    40 + acknowledgedPayload,
+                    headerLength + acknowledgedPayload,
                     segment.packet.size
                 )
 
