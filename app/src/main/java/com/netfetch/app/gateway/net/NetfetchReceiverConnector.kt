@@ -68,8 +68,20 @@ class NetfetchReceiverConnector(
         )
     }
 
-    private val dnsCache = java.util.concurrent.ConcurrentHashMap<Int, Pair<Long, ByteArray>>()
-    private val negativeCache = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+    /**
+     * Content-based key for DNS query caching. Unlike [java.util.Arrays.hashCode],
+     * this uses the full byte content for equality checks, preventing hash
+     * collisions from returning wrong DNS responses.
+     */
+    internal class DnsQueryKey(val bytes: ByteArray) {
+        private val hash = bytes.contentHashCode()
+        override fun equals(other: Any?): Boolean =
+            other is DnsQueryKey && bytes.contentEquals(other.bytes)
+        override fun hashCode(): Int = hash
+    }
+
+    private val dnsCache = java.util.concurrent.ConcurrentHashMap<DnsQueryKey, Pair<Long, ByteArray>>()
+    private val negativeCache = java.util.concurrent.ConcurrentHashMap<DnsQueryKey, Long>()
 
     override fun resolveDns(
         destination: InetAddress,
@@ -78,11 +90,11 @@ class NetfetchReceiverConnector(
         if (queryData.size < 12) return null
 
         val cacheKey = if (queryData.size > 2) {
-            java.util.Arrays.hashCode(queryData.copyOfRange(2, queryData.size))
-        } else 0
+            DnsQueryKey(queryData.copyOfRange(2, queryData.size))
+        } else null
 
         val now = System.currentTimeMillis()
-        if (cacheKey != 0) {
+        if (cacheKey != null) {
             val negExpiry = negativeCache[cacheKey]
             if (negExpiry != null && now < negExpiry) {
                 return null
@@ -110,13 +122,13 @@ class NetfetchReceiverConnector(
             if (response != null) break
         }
 
-        if (response != null && cacheKey != 0) {
+        if (response != null && cacheKey != null) {
             if (dnsCache.size > 1000) {
                 dnsCache.entries.removeIf { it.value.first <= now }
             }
             dnsCache[cacheKey] = Pair(now + 600_000L, response)
             negativeCache.remove(cacheKey)
-        } else if (response == null && cacheKey != 0) {
+        } else if (response == null && cacheKey != null) {
             negativeCache[cacheKey] = now + 5_000L
         }
 
