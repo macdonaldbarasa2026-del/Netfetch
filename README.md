@@ -105,7 +105,6 @@ Netfetch/
 │   ├── service/           # Hotspot foreground service, VPN gateway services
 │   └── ui/                # Jetpack Compose UI (Screens, Theme, Branding)
 ├── assets/                # Official vector logo and graphic assets
-├── docs/engineering/      # Architectural audit briefs and engineering specs
 └── gradle/                # Gradle wrapper and version catalogs
 ```
 
