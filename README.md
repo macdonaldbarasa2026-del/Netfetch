@@ -1,0 +1,144 @@
+<p align="center">
+  <img src="assets/logo.svg" width="128" height="128" alt="NetFetch App Icon" />
+</p>
+
+<h1 align="center">NetFetch</h1>
+
+<p align="center">
+  <strong>High-Performance Wi-Fi Direct Tethering &amp; No-Root Network Repeater for Android</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/macdonaldbarasa2026-del/Netfetch/releases/latest">
+    <img src="https://img.shields.io/badge/Download-NetFetch_v1.0.0.apk-00E5FF?style=for-the-badge&logo=android&logoColor=white" alt="Download APK" />
+  </a>
+  <a href="https://github.com/macdonaldbarasa2026-del/Netfetch/releases">
+    <img src="https://img.shields.io/github/v/release/macdonaldbarasa2026-del/Netfetch?style=for-the-badge&color=00B0FF" alt="Latest Release" />
+  </a>
+  <img src="https://img.shields.io/badge/Android-7.0%2B_%28API_24--36%29-0D1B2A?style=for-the-badge&logo=android" alt="Android Support" />
+  <img src="https://img.shields.io/badge/Kotlin-2.1.20-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" alt="Kotlin" />
+  <img src="https://img.shields.io/badge/Jetpack_Compose-Material_3-4285F4?style=for-the-badge" alt="Jetpack Compose" />
+</p>
+
+---
+
+## 🚀 Overview
+
+**NetFetch** turns your Android device into a high-speed Wi-Fi Direct repeater, tethering gateway, and proxy server without requiring root privileges. 
+
+Standard Android hotspot either shuts off existing Wi-Fi or triggers carrier entitlement checks that throttle or block tethering. NetFetch overcomes these limits by creating a localized Wi-Fi Direct hotspot and relaying connected client traffic through embedded, high-throughput proxy and packet engines.
+
+---
+
+## ✨ Key Features
+
+- **🔄 No-Root Wi-Fi Repeater:** Extend and share an existing Wi-Fi connection with nearby devices without disconnecting from your primary network.
+- **🛡️ Carrier Hotspot Bypass:** Disguises tethering traffic as device-local application requests, bypassing carrier hotspot caps and throttling.
+- **🌐 Triple-Proxy Architecture:**
+  - **HTTP Proxy (`:8282`):** Low-latency, high-bandwidth streaming pipeline for web browsing and apps.
+  - **Auto-Config PAC Server (`:8283`):** Automatic proxy configuration via WPAD (`http://<gateway>:8283/wpad.dat`).
+  - **SOCKS5 Relay (`:1080`):** Full TCP and UDP relay for gaming consoles, torrent clients, and terminal tools.
+- **🏎️ High-Throughput Packet Engine:** Optimized TUN/TCP/UDP engine featuring bounded buffer pools, zero-window throttling protection, dynamic MSS adjustment, and session deduplication.
+- **💻 Universal Multi-Device Support:** Plug-and-play compatibility with Windows, macOS, Linux, iOS (with automatic `.mobileconfig` provisioning), Android, and gaming consoles (Nintendo Switch, Steam Deck).
+- **📊 Real-Time Diagnostics & Dashboard:** Built-in network monitors displaying connected client telemetry, real-time uplink/downlink speeds, IP allocations, and proxy health metrics.
+
+---
+
+## 📥 Download Latest APK
+
+Get the customized, ready-to-install Android package:
+
+| Package | Version | Compatibility | Download Link |
+| :--- | :--- | :--- | :--- |
+| **NetFetch Release APK** | `v1.0.0` | Android 7.0+ (API 24 to 36) | [**Download NetFetch-v1.0.0.apk**](https://github.com/macdonaldbarasa2026-del/Netfetch/releases/download/v1.0.0/NetFetch-v1.0.0.apk) |
+
+> **SHA-256 Checksum:** `4207bcd76d6201e248d2d82e73470e38aafb9380aa9f34c9384be4c9035233c0`
+
+---
+
+## 📱 How to Connect Devices
+
+```
+               ┌────────────────────────┐
+               │    Upstream Internet   │
+               │ (Wi-Fi or Mobile Data) │
+               └───────────┬────────────┘
+                           │
+                 ┌─────────▼─────────┐
+                 │  NetFetch Gateway │
+                 │  (Android Phone)  │
+                 │ 192.168.49.1:8282 │
+                 └─────────┬─────────┘
+                           │ Wi-Fi Direct
+         ┌─────────────────┼─────────────────┐
+         │                 │                 │
+  ┌──────▼──────┐   ┌──────▼──────┐   ┌──────▼──────┐
+  │   Windows   │   │ macOS / iOS │   │   Console   │
+  │   Laptop    │   │  Profiles   │   │ Switch/Deck │
+  └─────────────┘   └─────────────┘   └─────────────┘
+```
+
+1. **Start the Hotspot in NetFetch:**
+   - Open NetFetch and tap **Start Hotspot**.
+   - Note the **Network Name (SSID)**, **Passphrase**, and **Gateway IP** (typically `192.168.49.1`).
+2. **Connect the Client Device:**
+   - Connect your client device (PC, Mac, iPhone, Console) to the Wi-Fi Direct network.
+3. **Configure Proxy:**
+   - **Windows / macOS / Linux:** Go to Network Settings > Proxy > Manual Proxy. Set Address to `192.168.49.1` and Port to `8282` (or set PAC URL to `http://192.168.49.1:8283/wpad.dat`).
+   - **iOS (iPhone/iPad):** Download the automatic profile from NetFetch Web Portal or configure HTTP Proxy to `Manual` with Server `192.168.49.1` and Port `8282`.
+   - **Nintendo Switch / Gaming Consoles:** In Internet Settings > Proxy Settings, choose `On`, Server: `192.168.49.1`, Port: `8282` (or SOCKS5 port `1080`).
+
+---
+
+## 🏗️ Architecture Overview
+
+The repository is organized following modern clean architecture and Android Jetpack guidelines:
+
+```
+Netfetch/
+├── app/src/main/java/com/netfetch/app/
+│   ├── gateway/net/       # TUN engine, TCP/UDP packet pipelines, buffer codecs
+│   ├── model/             # Client devices, hotspot states, band preference configs
+│   ├── netfetchlink/      # Device-to-device discovery and P2P link protocol
+│   ├── network/           # Upstream runtime, buffer pool, DNS engine, diagnostics
+│   ├── proxy/             # HTTP proxy, SOCKS5 relay, PAC WPAD server
+│   ├── service/           # Hotspot foreground service, VPN gateway services
+│   └── ui/                # Jetpack Compose UI (Screens, Theme, Branding)
+├── assets/                # Official vector logo and graphic assets
+├── docs/engineering/      # Architectural audit briefs and engineering specs
+└── gradle/                # Gradle wrapper and version catalogs
+```
+
+---
+
+## 🛠️ Building from Source
+
+### Prerequisites
+- JDK 17 or higher
+- Android SDK 36 (Build Tools 36.0.0)
+
+### Build Commands
+```bash
+# Clone the repository
+git clone https://github.com/macdonaldbarasa2026-del/Netfetch.git
+cd Netfetch
+
+# Run automated unit test suite
+./gradlew testDebugUnitTest
+
+# Assemble debug APK
+./gradlew assembleDebug
+
+# Build release bundle
+./gradlew bundleRelease
+```
+
+---
+
+## 📄 License & Attribution
+
+```text
+© 2026 Created by MacDonald | Powered by Mixfia
+```
+
+Distributed under the Apache 2.0 / Open Source License. Contributions and feedback are welcome!

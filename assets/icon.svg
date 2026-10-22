@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="128" height="128">
+  <defs>
+    <radialGradient id="bgGrad" cx="50%" cy="50%" r="65%" fx="30%" fy="30%">
+      <stop offset="0%" stop-color="#14283f" />
+      <stop offset="100%" stop-color="#0D1B2A" />
+    </radialGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="2.5" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Background Base with Rounded Corners -->
+  <rect width="108" height="108" rx="24" fill="url(#bgGrad)" stroke="#00E5FF" stroke-opacity="0.25" stroke-width="1.5" />
+
+  <!-- Outer Glow Wave -->
+  <path fill="#00E5FF" fill-opacity="0.15" d="M54,18 C73.88,18 90,34.12 90,54 C90,73.88 73.88,90 54,90 C34.12,90 18,73.88 18,54 C18,34.12 34.12,18 54,18 Z" />
+
+  <!-- Outer Wi-Fi Arc -->
+  <path fill="none" stroke="#00E5FF" stroke-width="5" stroke-linecap="round" d="M 30,42 A 32,32 0 0,1 78,42" filter="url(#glow)" />
+
+  <!-- Middle Wi-Fi Arc -->
+  <path fill="none" stroke="#00B0FF" stroke-width="5" stroke-linecap="round" d="M 38,50 A 21,21 0 0,1 70,50" />
+
+  <!-- Inner Wi-Fi Arc -->
+  <path fill="none" stroke="#00897B" stroke-width="5" stroke-linecap="round" d="M 46,58 A 11,11 0 0,1 62,58" />
+
+  <!-- Center Pulse Node -->
+  <circle cx="54" cy="72" r="6" fill="#00E5FF" filter="url(#glow)" />
+</svg>
