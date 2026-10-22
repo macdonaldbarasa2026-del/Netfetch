@@ -14,3 +14,7 @@ captures/
 *.dex
 app-debug-apk/
 research/
+*.log
+.aistudio/
+.env
+
