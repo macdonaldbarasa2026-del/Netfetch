@@ -330,7 +330,7 @@ fun SettingsScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = "NetFetch v1.0.0",
+                text = "NetFetch v1.0.1",
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 color = TextDark
