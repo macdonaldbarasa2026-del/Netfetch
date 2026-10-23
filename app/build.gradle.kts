@@ -6,18 +6,34 @@ plugins {
 
 android {
     namespace = "com.netfetch.app"
-    compileSdk = 36
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.netfetch.app"
         minSdk = 24
-        targetSdk = 36
-        versionCode = 103
-        versionName = "1.0.3"
+        targetSdk = 35
+        versionCode = 104
+        versionName = "1.0.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
+        }
+    }
+
+    signingConfigs {
+        create("release") {
+            val keystoreFile = file("keystore/release.keystore")
+            if (keystoreFile.exists()) {
+                storeFile = keystoreFile
+                storePassword = "netfetch123"
+                keyAlias = "netfetch"
+                keyPassword = "netfetch123"
+                enableV1Signing = true
+                enableV2Signing = true
+            } else {
+                initWith(getByName("debug"))
+            }
         }
     }
 
@@ -27,7 +43,7 @@ android {
             applicationIdSuffix = ".debug"
         }
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -57,8 +73,8 @@ android {
 
     packaging {
         resources {
-            excludes += "/META-INF/**"
-            excludes += "/META-INDEX/*"
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "/META-INF/INDEX.LIST"
         }
     }
 
