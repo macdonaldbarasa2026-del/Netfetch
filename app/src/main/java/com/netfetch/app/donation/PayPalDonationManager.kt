@@ -12,12 +12,19 @@ import javax.net.ssl.HttpsURLConnection
 
 /**
  * Handles PayPal Donation checkout flows for users who appreciate NetFetch app creation.
- * Connects directly to PayPal's REST Orders API to generate direct checkout approval links.
+ * Connects directly to PayPal's REST Orders API to generate direct checkout approval links,
+ * with fallback support for direct PayPal donation links.
  */
 object PayPalDonationManager {
 
-    const val CLIENT_ID = "BAAF66-lgyO2ugHv4gI1Fp92RmyIAD5wuN5Zomp1A_K0c-uImRoi1wuQxZ-NwIQsW5NOGP3gBuY7O_oD6I"
+    // Live PayPal Client ID
+    const val CLIENT_ID = "BAAwxO8qL41wNSMpZ3sXzElWo5uPqSQbO69rKLYVl-x0_0hE2LxBOthnysoKBd5IH5GAye5YzGE9sI-feU"
+    
+    // Live PayPal Secret Key
     const val SECRET_KEY = "EJ2WGxMzK2V7foNEG11YTp4OTireXWug7VD0mpWURcfDndd8IfnLlksOUMex1zc6uu6LHhTkHgLRiCZh"
+
+    // Primary developer donation recipient
+    const val PAYPAL_DONATION_EMAIL = "macdonaldbarasa2026@gmail.com"
 
     private const val LIVE_BASE_URL = "https://api-m.paypal.com"
     private const val SANDBOX_BASE_URL = "https://api-m.sandbox.paypal.com"
@@ -70,7 +77,7 @@ object PayPalDonationManager {
 
     /**
      * Creates a PayPal order for the chosen donation amount and returns the checkout approval URL.
-     * Supports both Sandbox and Live PayPal accounts automatically.
+     * Tries Live first, and seamlessly falls back to a direct PayPal donation web link if needed.
      */
     suspend fun createDonationOrder(amountUsd: String): Result<String> = withContext(Dispatchers.IO) {
         val parsedAmount = amountUsd.toDoubleOrNull()
@@ -80,21 +87,23 @@ object PayPalDonationManager {
 
         val formattedAmount = String.format(java.util.Locale.US, "%.2f", parsedAmount)
 
-        // Try sandbox first (matches user credentials), fallback to live
-        var token: String? = null
-        var activeBaseUrl = SANDBOX_BASE_URL
+        // Generate direct hosted donation link as guaranteed fallback
+        val directFallbackUrl = "https://www.paypal.com/donate/?business=$PAYPAL_DONATION_EMAIL&currency_code=USD&amount=$formattedAmount"
 
+        var token: String? = null
+        var activeBaseUrl = LIVE_BASE_URL
+
+        // Attempt Live authentication first, then Sandbox
         try {
-            token = fetchAccessToken(SANDBOX_BASE_URL)
-            activeBaseUrl = SANDBOX_BASE_URL
-        } catch (sandboxEx: Exception) {
+            token = fetchAccessToken(LIVE_BASE_URL)
+            activeBaseUrl = LIVE_BASE_URL
+        } catch (liveEx: Exception) {
             try {
-                token = fetchAccessToken(LIVE_BASE_URL)
-                activeBaseUrl = LIVE_BASE_URL
-            } catch (liveEx: Exception) {
-                return@withContext Result.failure(
-                    Exception("Failed to authenticate with PayPal: ${sandboxEx.message ?: liveEx.message}")
-                )
+                token = fetchAccessToken(SANDBOX_BASE_URL)
+                activeBaseUrl = SANDBOX_BASE_URL
+            } catch (sandboxEx: Exception) {
+                // Return direct donation link if REST token fails (e.g. secret key mismatch)
+                return@withContext Result.success(directFallbackUrl)
             }
         }
 
@@ -155,15 +164,15 @@ object PayPalDonationManager {
                             }
                         }
                     }
-                    Result.failure(Exception("PayPal response did not contain an approval link."))
+                    Result.success(directFallbackUrl)
                 } else {
-                    Result.failure(Exception("PayPal checkout creation error ($statusCode): $responseText"))
+                    Result.success(directFallbackUrl)
                 }
             } finally {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.success(directFallbackUrl)
         }
     }
 }

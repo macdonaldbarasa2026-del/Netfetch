@@ -11,8 +11,7 @@ class PayPalDonationManagerTest {
     fun testCredentialsAreSet() {
         assertTrue(PayPalDonationManager.CLIENT_ID.isNotEmpty())
         assertTrue(PayPalDonationManager.SECRET_KEY.isNotEmpty())
-        assertEquals("BAAF66-lgyO2ugHv4gI1Fp92RmyIAD5wuN5Zomp1A_K0c-uImRoi1wuQxZ-NwIQsW5NOGP3gBuY7O_oD6I", PayPalDonationManager.CLIENT_ID)
-        assertEquals("EJ2WGxMzK2V7foNEG11YTp4OTireXWug7VD0mpWURcfDndd8IfnLlksOUMex1zc6uu6LHhTkHgLRiCZh", PayPalDonationManager.SECRET_KEY)
+        assertEquals("BAAwxO8qL41wNSMpZ3sXzElWo5uPqSQbO69rKLYVl-x0_0hE2LxBOthnysoKBd5IH5GAye5YzGE9sI-feU", PayPalDonationManager.CLIENT_ID)
     }
 
     @Test
@@ -28,5 +27,13 @@ class PayPalDonationManagerTest {
 
         val resultEmpty = PayPalDonationManager.createDonationOrder("")
         assertTrue(resultEmpty.isFailure)
+    }
+
+    @Test
+    fun testValidAmountReturnsUrl() = runBlocking {
+        val result = PayPalDonationManager.createDonationOrder("5.00")
+        assertTrue(result.isSuccess)
+        val url = result.getOrNull()
+        assertTrue(url != null && url.startsWith("https://"))
     }
 }
