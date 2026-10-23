@@ -32,19 +32,23 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
+      - name: Configure Android SDK
         run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          # The ubuntu-latest runner already ships with Android SDK at $ANDROID_HOME.
+          # We only need to ensure the specific platforms and build-tools we require are present.
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          ls "$ANDROID_HOME/platforms" 2>/dev/null || echo "platforms dir not found"
+          ls "$ANDROID_HOME/build-tools" 2>/dev/null || echo "build-tools dir not found"
+          # Accept licenses and install only what is missing
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
       - name: Print environment
         run: |
           java -version
-          sdkmanager --version
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --version || true
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -55,7 +59,7 @@ jobs:
       - name: Build Release APK and AAB
         run: ./gradlew assembleRelease assembleDebug bundleRelease --no-daemon --stacktrace
 
-      - name: Verify APK exists
+      - name: Verify APK exists and is valid
         run: |
           APK_PATH="app/build/outputs/apk/release/app-release.apk"
           if [ ! -f "$APK_PATH" ]; then
@@ -64,17 +68,14 @@ jobs:
             exit 1
           fi
           echo "APK found: $(ls -lh $APK_PATH)"
-          # Basic APK sanity check - must be a real zip/apk file
           file "$APK_PATH"
-          unzip -t "$APK_PATH" > /dev/null && echo "APK is valid zip/apk" || (echo "APK is corrupt!" && exit 1)
+          unzip -t "$APK_PATH" > /dev/null && echo "APK integrity check: PASSED" || (echo "APK is corrupt!" && exit 1)
 
       - name: Prepare Release APK Packages
         run: |
           mkdir -p release-apk-dist
-          # Copy signed release APK to canonical names
           cp app/build/outputs/apk/release/app-release.apk release-apk-dist/NetFetch.apk
           cp app/build/outputs/apk/release/app-release.apk release-apk-dist/NetFetch-v1.0.2.apk
-          # Generate SHA-256 checksums
           cd release-apk-dist
           sha256sum NetFetch.apk > NetFetch.apk.sha256
           sha256sum NetFetch-v1.0.2.apk > NetFetch-v1.0.2.apk.sha256
@@ -135,7 +136,6 @@ jobs:
           © 2026 Created by MacDonald | Powered by Mixfia
           RELNOTES
 
-          # Check if target release already exists
           if gh release view "$VERSION" > /dev/null 2>&1; then
             echo "Release $VERSION exists. Uploading latest APK assets..."
             gh release upload "$VERSION" release-apk-dist/* --clobber
@@ -147,15 +147,13 @@ jobs:
               --latest
           fi
 
-          # Verify the release asset was uploaded successfully
           echo "Verifying release assets..."
           gh release view "$VERSION" --json assets -q '.assets[].name'
 
-          # Update legacy v1.0.0 release with latest NetFetch.apk so old link visitors get the newest build
           if gh release view "v1.0.0" > /dev/null 2>&1; then
             echo "Updating legacy v1.0.0 release with latest NetFetch.apk..."
             gh release upload "v1.0.0" release-apk-dist/NetFetch.apk --clobber || true
           fi
 
           echo "Release $VERSION published successfully."
-          echo "Download URL: https://github.com/macdonaldbarasa2026-del/Netfetch/releases/latest/download/NetFetch.apk"
+          echo "Direct download URL: https://github.com/macdonaldbarasa2026-del/Netfetch/releases/latest/download/NetFetch.apk"
