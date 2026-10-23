@@ -16,5 +16,15 @@ app-debug-apk/
 research/
 *.log
 .aistudio/
-.env
 
+# Environment and secret files
+.env
+.env.*
+!.env.example
+*.secret
+*.key
+*credentials*.json
+*credentials*.xml
+
+# Backend dependencies
+backend/node_modules/
