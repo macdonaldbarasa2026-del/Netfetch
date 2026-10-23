@@ -1,5 +1,8 @@
 package com.netfetch.app.ui.screens
 
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -7,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -14,17 +18,29 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.netfetch.app.donation.PayPalDonationManager
 import com.netfetch.app.model.HotspotConfig
 import com.netfetch.app.model.TetherMode
 import com.netfetch.app.ui.theme.*
+import kotlinx.coroutines.launch
 
 @Composable
 fun HelpScreen(config: HotspotConfig) {
     val scrollState = rememberScrollState()
     val isPro = config.mode == TetherMode.PRO
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    var selectedAmount by remember { mutableStateOf("5.00") }
+    var customAmount by remember { mutableStateOf("") }
+    var isCustomSelected by remember { mutableStateOf(false) }
+    var isDonating by remember { mutableStateOf(false) }
+    var donationError by remember { mutableStateOf<String?>(null) }
 
     Column(
         modifier = Modifier
@@ -212,6 +228,242 @@ fun HelpScreen(config: HotspotConfig) {
                     question = "What is Normal vs Pro mode?",
                     answer = "Normal mode serves an ultra-fast HTTP/HTTPS proxy and PAC auto-config script. Pro mode adds an authenticated SOCKS5 tunnel with receiver VPN support for apps that require a dedicated TUN interface."
                 )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // ── App Appreciation & PayPal Donation Card ──
+        Card(
+            colors = CardDefaults.cardColors(containerColor = CardWhite),
+            border = BorderStroke(1.5.dp, PrimaryBlack),
+            shape = RoundedCornerShape(18.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Favorite,
+                        contentDescription = null,
+                        tint = RedError,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "Support App Creation",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PrimaryBlack
+                        )
+                        Text(
+                            text = "Appreciate NetFetch? Donate via PayPal",
+                            fontSize = 12.sp,
+                            color = TextMuted
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Text(
+                    text = "NetFetch is free, rootless, and carrier-limit free. If you appreciate its creation and want to support ongoing updates, maintenance, and proxy bypass optimizations, any donation is warmly appreciated!",
+                    fontSize = 12.sp,
+                    color = TextDark,
+                    lineHeight = 18.sp
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Donation Tier Selection
+                val presets = listOf("2.00" to "$2", "5.00" to "$5", "10.00" to "$10", "25.00" to "$25")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    presets.forEach { (amt, label) ->
+                        val isSelected = !isCustomSelected && selectedAmount == amt
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable {
+                                    isCustomSelected = false
+                                    selectedAmount = amt
+                                    donationError = null
+                                },
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isSelected) PrimaryBlack else CreamBackground,
+                            border = BorderStroke(1.dp, if (isSelected) PrimaryBlack else SurfaceBorder)
+                        ) {
+                            Box(
+                                modifier = Modifier.padding(vertical = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = label,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isSelected) CardWhite else PrimaryBlack
+                                )
+                            }
+                        }
+                    }
+
+                    Surface(
+                        modifier = Modifier
+                            .weight(1.2f)
+                            .clickable {
+                                isCustomSelected = true
+                                donationError = null
+                            },
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (isCustomSelected) PrimaryBlack else CreamBackground,
+                        border = BorderStroke(1.dp, if (isCustomSelected) PrimaryBlack else SurfaceBorder)
+                    ) {
+                        Box(
+                            modifier = Modifier.padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Custom",
+                                fontSize = 13.sp,
+                                fontWeight = if (isCustomSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isCustomSelected) CardWhite else PrimaryBlack
+                            )
+                        }
+                    }
+                }
+
+                if (isCustomSelected) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = customAmount,
+                        onValueChange = { input ->
+                            customAmount = input.filter { it.isDigit() || it == '.' }
+                            donationError = null
+                        },
+                        label = { Text("Enter Amount (USD)") },
+                        leadingIcon = {
+                            Text(
+                                "$",
+                                fontWeight = FontWeight.Bold,
+                                color = PrimaryBlack,
+                                modifier = Modifier.padding(start = 12.dp)
+                            )
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                val finalAmount = if (isCustomSelected) customAmount.trim() else selectedAmount
+                val buttonLabel = if (finalAmount.isNotEmpty()) "Donate $$finalAmount with PayPal" else "Donate with PayPal"
+
+                Button(
+                    onClick = {
+                        val parsed = finalAmount.toDoubleOrNull()
+                        if (parsed == null || parsed <= 0.0) {
+                            donationError = "Please enter a valid amount (e.g. 5.00)"
+                            return@Button
+                        }
+                        donationError = null
+                        isDonating = true
+                        coroutineScope.launch {
+                            val result = PayPalDonationManager.createDonationOrder(finalAmount)
+                            isDonating = false
+                            result.fold(
+                                onSuccess = { checkoutUrl ->
+                                    try {
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(checkoutUrl)).apply {
+                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        }
+                                        context.startActivity(intent)
+                                        Toast.makeText(
+                                            context,
+                                            "Opening PayPal checkout... Thank you for your support!",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    } catch (e: Exception) {
+                                        donationError = "Unable to launch browser: ${e.message}"
+                                    }
+                                },
+                                onFailure = { error ->
+                                    donationError = error.message ?: "Could not connect to PayPal checkout."
+                                }
+                            )
+                        }
+                    },
+                    enabled = !isDonating,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PrimaryBlack,
+                        contentColor = CardWhite
+                    )
+                ) {
+                    if (isDonating) {
+                        CircularProgressIndicator(
+                            color = CardWhite,
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "Connecting to PayPal...",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.Payment,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = buttonLabel,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                if (donationError != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = donationError!!,
+                        color = RedError,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = null,
+                        tint = TextMuted,
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Secured PayPal transaction • Direct support for developer MacDonald",
+                        fontSize = 11.sp,
+                        color = TextMuted
+                    )
+                }
             }
         }
 
