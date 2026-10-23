@@ -75,10 +75,10 @@ jobs:
         run: |
           mkdir -p release-apk-dist
           cp app/build/outputs/apk/release/app-release.apk release-apk-dist/NetFetch.apk
-          cp app/build/outputs/apk/release/app-release.apk release-apk-dist/NetFetch-v1.0.2.apk
+          cp app/build/outputs/apk/release/app-release.apk release-apk-dist/NetFetch-v1.0.3.apk
           cd release-apk-dist
           sha256sum NetFetch.apk > NetFetch.apk.sha256
-          sha256sum NetFetch-v1.0.2.apk > NetFetch-v1.0.2.apk.sha256
+          sha256sum NetFetch-v1.0.3.apk > NetFetch-v1.0.3.apk.sha256
           cd ..
           ls -la release-apk-dist
 
@@ -105,19 +105,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.0.2"
+          VERSION="v1.0.3"
 
           cat > release-notes.md << 'RELNOTES'
-          ## NetFetch v1.0.2 — Stability Fix Release
+          ## NetFetch v1.0.3 — Production Release with Verified PayPal Support
 
           Turn your Android device into a high-performance Wi-Fi Direct repeater, tethering gateway, and local proxy server without requiring root access.
 
-          ### 🛠️ What's Fixed in v1.0.2
-          - **Build Fix:** Corrected escaped newline syntax error in HelpScreen.kt that was preventing the release APK from compiling.
-          - **Preserved:** Kenya-compliant PayPal Hosted Button integration with explicit error when Button ID is missing.
-          - **Preserved:** All security improvements — no PayPal secret keys in the APK.
+          ### 💎 What's New in v1.0.3
+          - **Verified PayPal Hosted Button Integration:** Configured and verified with live PayPal Hosted Button ID (`SVSVDRDVSPU9L`), enabling secure developer appreciation donations directly via PayPal without exposing private credentials.
+          - **Full Mobile & Desktop Support:** Secure redirect opens PayPal's encrypted hosted checkout in donor's default browser.
+          - **Zero Secret Exposure:** Maintained strict zero-credential client architecture (no secret keys in APK).
 
-          ### ✨ Features
+          ### ✨ Core Features
           - **Enhanced Wi-Fi Direct & Hotspot Stability:** Clean lifecycle management and automatic P2P channel cleanup.
           - **Triple-Proxy Performance:** High-throughput HTTP (:8282), PAC auto-config (:8283), and SOCKS5 (:1080) relays.
           - **Packet Engine Optimizations:** Dynamic TCP MSS clamping, bounded memory pool, and zero-window throttling prevention.
@@ -125,11 +125,11 @@ jobs:
 
           ### 📦 Download & Install
           - **[NetFetch.apk](https://github.com/macdonaldbarasa2026-del/Netfetch/releases/latest/download/NetFetch.apk)**: Always links directly to the latest production APK.
-          - **NetFetch-v1.0.2.apk**: Version-pinned build for this release.
+          - **NetFetch-v1.0.3.apk**: Version-pinned build for this release.
 
           ### 📋 Technical Details
           - Application ID: `com.netfetch.app`
-          - Version: 1.0.2 (versionCode 102)
+          - Version: 1.0.3 (versionCode 103)
           - Minimum Android: API 24 (Android 7.0 Nougat)
           - Target Android: API 36
 

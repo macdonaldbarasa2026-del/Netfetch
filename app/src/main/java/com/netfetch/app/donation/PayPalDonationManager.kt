@@ -35,11 +35,10 @@ object PayPalDonationManager {
     // Used only for informational purposes; actual order creation is handled by the backend.
     const val CLIENT_ID = "BAAwxO8qL41wNSMpZ3sXzElWo5uPqSQbO69rKLYVl-x0_0hE2LxBOthnysoKBd5IH5GAye5YzGE9sI-feU"
 
-    // ── STEP 1 (REQUIRED): Create a Hosted Donate Button in your PayPal Business dashboard ──
-    // Log into paypal.com → Business Tools → Accept Payments → Donate Button
-    // Select "open amount" so donors can enter any amount → Generate → copy hosted_button_id
-    // Paste the ID (e.g. "ABC123XYZ456") between the quotes below:
-    var hostedButtonId: String? = null  // TODO: Set to your PayPal hosted_button_id here
+    // ── STEP 1 (CONFIGURED): PayPal Hosted Donate Button ID ──
+    // Created in PayPal Business dashboard (Pay & Get Paid → PayPal Buttons → Donate)
+    // Verified against PayPal's donation node web server endpoint.
+    var hostedButtonId: String? = "SVSVDRDVSPU9L"
 
     // Developer's PayPal-registered email address (used as a universal send-money fallback).
     // This must match exactly the email registered on your PayPal account.

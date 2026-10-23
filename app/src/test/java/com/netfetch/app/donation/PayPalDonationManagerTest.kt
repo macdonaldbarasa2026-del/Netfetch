@@ -85,5 +85,15 @@ class PayPalDonationManagerTest {
         assertTrue("Should contain hosted_button_id", url!!.contains("hosted_button_id=ABC123XYZ"))
         assertTrue("Should use PayPal donate endpoint", url.startsWith("https://www.paypal.com/donate/"))
     }
+
+    @Test
+    fun testConfiguredProductionHostedButtonId() = runBlocking {
+        PayPalDonationManager.hostedButtonId = "SVSVDRDVSPU9L"
+        val result = PayPalDonationManager.createDonationOrder("5.00")
+        assertTrue(result.isSuccess)
+        val url = result.getOrNull()
+        assertTrue(url != null)
+        assertEquals("https://www.paypal.com/donate/?hosted_button_id=SVSVDRDVSPU9L", url)
+    }
 }
 
