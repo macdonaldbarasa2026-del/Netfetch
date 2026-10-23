@@ -1,4 +1,4 @@
-name: Android CI & Release
+name: "Android CI & Release"
 
 on:
   push:
@@ -90,6 +90,25 @@ jobs:
         run: |
           VERSION="v1.0.1"
           
+          cat << 'EOF' > release-notes.md
+          ## NetFetch v1.0.1 — Official Release
+
+          Turn your Android device into a high-performance Wi-Fi Direct repeater, tethering gateway, and local proxy server without requiring root access.
+
+          ### ✨ What's New in This Release
+          - **Kenya-Compliant PayPal Support System:** Replaced broken profile links with compliant hosted button flow and zero app secrets.
+          - **Enhanced Wi-Fi Direct & Hotspot Stability:** Clean lifecycle management, connection tear-down, and automatic P2P channel cleanup.
+          - **Triple-Proxy Performance:** High-throughput HTTP (:8282), PAC auto-config (:8283), and SOCKS5 (:1080) relays.
+          - **Packet Engine Optimizations:** Dynamic TCP MSS clamping, bounded memory pool, and zero-window throttling prevention.
+          - **Universal Cross-Platform Support:** Windows, macOS, iOS, Android, and gaming consoles.
+
+          ### 📦 Download & Install
+          - **[NetFetch.apk](https://github.com/macdonaldbarasa2026-del/Netfetch/releases/latest/download/NetFetch.apk)**: Always links directly to the latest production APK.
+          - **NetFetch-v1.0.1.apk**: Version-pinned build.
+
+          © 2026 Created by MacDonald | Powered by Mixfia
+          EOF
+
           # Check if target release exists
           if gh release view "$VERSION" >/dev/null 2>&1; then
             echo "Release $VERSION exists. Uploading latest APK assets..."
@@ -98,22 +117,7 @@ jobs:
             echo "Creating release $VERSION with latest APK..."
             gh release create "$VERSION" release-apk-dist/* \
               --title "NetFetch $VERSION — Latest Official Release" \
-              --notes "## NetFetch $VERSION — Official Release
-
-Turn your Android device into a high-performance Wi-Fi Direct repeater, tethering gateway, and local proxy server without requiring root access.
-
-### ✨ What's New in This Release
-- **Kenya-Compliant PayPal Support System:** Replaced broken profile links with compliant hosted button flow and zero app secrets.
-- **Enhanced Wi-Fi Direct & Hotspot Stability:** Clean lifecycle management, connection tear-down, and automatic P2P channel cleanup.
-- **Triple-Proxy Performance:** High-throughput HTTP (:8282), PAC auto-config (:8283), and SOCKS5 (:1080) relays.
-- **Packet Engine Optimizations:** Dynamic TCP MSS clamping, bounded memory pool, and zero-window throttling prevention.
-- **Universal Cross-Platform Support:** Windows, macOS, iOS, Android, and gaming consoles.
-
-### 📦 Download & Install
-- **[NetFetch.apk](https://github.com/macdonaldbarasa2026-del/Netfetch/releases/latest/download/NetFetch.apk)**: Always links directly to the latest production APK.
-- **NetFetch-$VERSION.apk**: Version-pinned build.
-
-© 2026 Created by MacDonald | Powered by Mixfia" \
+              --notes-file release-notes.md \
               --latest
           fi
 
