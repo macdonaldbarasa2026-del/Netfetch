@@ -11,7 +11,8 @@ class PayPalDonationManagerTest {
 
     @Before
     fun setup() {
-        PayPalDonationManager.payPalMeUsername = "macdonaldbarasa2026"
+        // Reset to defaults before each test
+        PayPalDonationManager.payPalEmail = "macdonaldbarasa2026@gmail.com"
         PayPalDonationManager.hostedButtonId = null
         PayPalDonationManager.backendOrderEndpoint = null
     }
@@ -30,6 +31,22 @@ class PayPalDonationManagerTest {
     }
 
     @Test
+    fun testNoPayPalMeUrlUsed() {
+        // PayPal.Me is not supported for Kenya-registered accounts.
+        // Ensure the code never generates a paypalme/username-style path regardless of outcome.
+        runBlocking {
+            val result = PayPalDonationManager.createDonationOrder("5.00")
+            // When no hostedButtonId is configured, result is a failure with instructions.
+            // Either way, we must not have produced a PayPal.Me profile URL.
+            val url = result.getOrNull() ?: ""
+            assertFalse(
+                "PayPal.Me profile URLs are not valid for Kenya-registered accounts and must not be generated",
+                url.matches(Regex("https://www\\.paypal\\.com/paypalme/[^/?]+/.*"))
+            )
+        }
+    }
+
+    @Test
     fun testInvalidAmountReturnsFailure() = runBlocking {
         val resultNegative = PayPalDonationManager.createDonationOrder("-5.00")
         assertTrue(resultNegative.isFailure)
@@ -45,13 +62,17 @@ class PayPalDonationManagerTest {
     }
 
     @Test
-    fun testValidAmountGeneratesPayPalMeUrl() = runBlocking {
+    fun testValidAmountWithNoButtonIdGeneratesEmailFallbackUrl() = runBlocking {
+        // With no hosted button ID and no backend, should return a clear setup-required failure
+        // (not a broken/deprecated PayPal URL, not a PayPal.Me link which doesn't work for Kenya)
+        PayPalDonationManager.hostedButtonId = null
         val result = PayPalDonationManager.createDonationOrder("5.00")
-        assertTrue(result.isSuccess)
-        val url = result.getOrNull()
-        assertTrue(url != null)
-        assertTrue(url!!.startsWith("https://www.paypal.com/paypalme/"))
-        assertTrue(url.endsWith("/5.00"))
+        assertTrue(
+            "Without a configured hosted button, result should be failure with setup instructions",
+            result.isFailure
+        )
+        val errorMsg = result.exceptionOrNull()?.message ?: ""
+        assertTrue("Error should mention how to set up", errorMsg.contains("hosted_button_id") || errorMsg.contains("Donation is not yet active"))
     }
 
     @Test
@@ -61,6 +82,8 @@ class PayPalDonationManagerTest {
         assertTrue(result.isSuccess)
         val url = result.getOrNull()
         assertTrue(url != null)
-        assertTrue(url!!.contains("hosted_button_id=ABC123XYZ"))
+        assertTrue("Should contain hosted_button_id", url!!.contains("hosted_button_id=ABC123XYZ"))
+        assertTrue("Should use PayPal donate endpoint", url.startsWith("https://www.paypal.com/donate/"))
     }
 }
+

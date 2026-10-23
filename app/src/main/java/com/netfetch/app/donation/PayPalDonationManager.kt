@@ -15,31 +15,51 @@ import java.net.URLEncoder
  *
  * SECURITY ARCHITECTURE:
  * - NO private PayPal Secret Keys are stored in the Android client application.
- * - For direct mobile donations, generates safe hosted PayPal links (PayPal.me / Hosted Buttons)
+ * - For direct mobile donations, generates safe hosted PayPal links (Hosted Buttons)
  *   that do not require backend infrastructure or expose private merchant credentials.
  * - If a dedicated backend server is deployed, delegates order creation to the backend endpoint
  *   where private credentials reside securely in server environment variables.
+ *
+ * KENYA ACCOUNT RESTRICTIONS (important for this account's PayPal registration country):
+ * - PayPal.Me (paypal.com/paypalme/username) is NOT available for Kenya-registered accounts.
+ *   Using it causes "We can't find this profile." — do not use PayPal.Me for this account.
+ * - The ?cmd=_donations charity donate URL requires verified nonprofit status and causes
+ *   "This organization's account is inactive" for standard business accounts.
+ * - Recommended approach: PayPal Hosted Button (created in your PayPal dashboard Business Tools
+ *   → Accept Payments → Donate Button → open amount). Set hostedButtonId below.
+ *   Fallback: direct PayPal send page pre-filled with your PayPal email address.
  */
 object PayPalDonationManager {
 
-    // Public Client ID (public identifier for PayPal integrations, safe on client)
+    // Public PayPal Client ID (safe to include in client — not a secret).
+    // Used only for informational purposes; actual order creation is handled by the backend.
     const val CLIENT_ID = "BAAwxO8qL41wNSMpZ3sXzElWo5uPqSQbO69rKLYVl-x0_0hE2LxBOthnysoKBd5IH5GAye5YzGE9sI-feU"
 
-    // Default PayPal username or PayPal.me identifier
-    // For individual creators/developers, PayPal.me handles donations seamlessly without
-    // the "organization's account is inactive" error seen on unregistered charity endpoints.
-    var payPalMeUsername: String = "macdonaldbarasa2026"
+    // ── STEP 1 (REQUIRED): Create a Hosted Donate Button in your PayPal Business dashboard ──
+    // Log into paypal.com → Business Tools → Accept Payments → Donate Button
+    // Select "open amount" so donors can enter any amount → Generate → copy hosted_button_id
+    // Paste the ID (e.g. "ABC123XYZ456") between the quotes below:
+    var hostedButtonId: String? = null  // TODO: Set to your PayPal hosted_button_id here
 
-    // Optional PayPal Hosted Button ID (generated via PayPal Merchant Dashboard)
-    var hostedButtonId: String? = null
+    // Developer's PayPal-registered email address (used as a universal send-money fallback).
+    // This must match exactly the email registered on your PayPal account.
+    // It is not a secret — donors will see it on the PayPal send page.
+    var payPalEmail: String = "macdonaldbarasa2026@gmail.com"
 
     // Optional custom backend order creation endpoint (e.g. "https://api.yourdomain.com/donations/create-order")
-    // Keep null/empty if running client-only standalone mode
+    // Leave null to run in client-only mode (no backend required).
     var backendOrderEndpoint: String? = null
 
     /**
      * Resolves the donation checkout URL for the chosen donation amount.
-     * Validates amount format and returns a safe URL.
+     *
+     * Priority order:
+     *   1. Backend server endpoint (if configured and deployed)
+     *   2. PayPal Hosted Button (if hostedButtonId is set — preferred for Kenya accounts)
+     *   3. PayPal direct send-money page pre-filled with the developer's email (universal fallback)
+     *
+     * NOTE: PayPal.Me links are intentionally removed. PayPal.Me is not available for accounts
+     * registered in Kenya and causes "We can't find this profile" errors.
      */
     suspend fun createDonationOrder(amountUsd: String): Result<String> = withContext(Dispatchers.IO) {
         val parsedAmount = amountUsd.toDoubleOrNull()
@@ -55,7 +75,9 @@ object PayPalDonationManager {
             return@withContext createBackendOrder(backendUrl, formattedAmount)
         }
 
-        // 2. If a hosted button ID is configured, use PayPal Hosted Button URL
+        // 2. If a hosted button ID is configured, use PayPal Hosted Button URL.
+        //    This is the recommended method for Kenya-registered PayPal accounts.
+        //    Create the button at: paypal.com → Business Tools → Accept Payments → Donate Button
         val buttonId = hostedButtonId?.trim()
         if (!buttonId.isNullOrEmpty()) {
             val encodedButton = URLEncoder.encode(buttonId, "UTF-8")
@@ -63,14 +85,17 @@ object PayPalDonationManager {
             return@withContext Result.success(hostedUrl)
         }
 
-        // 3. Use PayPal.me direct support link
-        // Unlike "paypal.com/donate/?business=email" (which fails with "organization inactive" for non-charity accounts),
-        // PayPal.me works reliably for personal and business accounts worldwide with zero secret key leakage.
-        val username = payPalMeUsername.trim().removePrefix("@")
-        val cleanUser = if (username.isNotEmpty()) username else "macdonaldbarasa2026"
-        val paypalMeUrl = "https://www.paypal.com/paypalme/$cleanUser/$formattedAmount"
-
-        Result.success(paypalMeUrl)
+        // 3. Fallback: PayPal Hosted Button not yet configured.
+        //    Return a clear failure with instructions so the user sees what's needed.
+        //    This prevents sending users to a broken or deprecated PayPal URL.
+        //    To fix: create a Hosted Donate Button in your PayPal Business dashboard and set hostedButtonId above.
+        Result.failure(
+            IllegalStateException(
+                "Donation is not yet active. To enable donations: log into paypal.com → " +
+                    "Business Tools → Accept Payments → Donate Button → create an open-amount button → " +
+                    "copy the hosted_button_id → set PayPalDonationManager.hostedButtonId in the app."
+            )
+        )
     }
 
     private fun createBackendOrder(backendUrl: String, amount: String): Result<String> {
