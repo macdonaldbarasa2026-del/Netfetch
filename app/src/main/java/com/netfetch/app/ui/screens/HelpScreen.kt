@@ -446,7 +446,24 @@ fun HelpScreen(config: HotspotConfig) {
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                Row(\n                    modifier = Modifier.fillMaxWidth(),\n                    horizontalArrangement = Arrangement.Center,\n                    verticalAlignment = Alignment.CenterVertically\n                ) {\n                    Icon(\n                        imageVector = Icons.Default.Lock,\n                        contentDescription = null,\n                        tint = TextMuted,\n                        modifier = Modifier.size(12.dp)\n                    )\n                    Spacer(modifier = Modifier.width(4.dp))\n                    Text(\n                        text = \"Secured PayPal transaction • Direct support for developer MacDonald\",\n                        fontSize = 11.sp,\n                        color = TextMuted\n                    )\n                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = null,
+                        tint = TextMuted,
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Secured PayPal transaction • Direct support for developer MacDonald",
+                        fontSize = 11.sp,
+                        color = TextMuted
+                    )
+                }
             }
         }
 

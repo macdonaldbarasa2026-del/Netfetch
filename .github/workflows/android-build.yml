@@ -33,7 +33,7 @@ jobs:
           java-version: '17'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
+        uses: android-actions/setup-android@v3
 
       - name: Install Android SDK packages
         run: |
@@ -49,19 +49,35 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Run Unit Tests and Build Artifacts
-        run: ./gradlew testDebugUnitTest assembleRelease assembleDebug bundleRelease --no-daemon --stacktrace
+      - name: Run Unit Tests
+        run: ./gradlew testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Build Release APK and AAB
+        run: ./gradlew assembleRelease assembleDebug bundleRelease --no-daemon --stacktrace
+
+      - name: Verify APK exists
+        run: |
+          APK_PATH="app/build/outputs/apk/release/app-release.apk"
+          if [ ! -f "$APK_PATH" ]; then
+            echo "ERROR: Release APK not found at $APK_PATH"
+            find app/build/outputs -name "*.apk" 2>/dev/null
+            exit 1
+          fi
+          echo "APK found: $(ls -lh $APK_PATH)"
+          # Basic APK sanity check - must be a real zip/apk file
+          file "$APK_PATH"
+          unzip -t "$APK_PATH" > /dev/null && echo "APK is valid zip/apk" || (echo "APK is corrupt!" && exit 1)
 
       - name: Prepare Release APK Packages
         run: |
           mkdir -p release-apk-dist
           # Copy signed release APK to canonical names
           cp app/build/outputs/apk/release/app-release.apk release-apk-dist/NetFetch.apk
-          cp app/build/outputs/apk/release/app-release.apk release-apk-dist/NetFetch-v1.0.1.apk
+          cp app/build/outputs/apk/release/app-release.apk release-apk-dist/NetFetch-v1.0.2.apk
           # Generate SHA-256 checksums
           cd release-apk-dist
           sha256sum NetFetch.apk > NetFetch.apk.sha256
-          sha256sum NetFetch-v1.0.1.apk > NetFetch-v1.0.1.apk.sha256
+          sha256sum NetFetch-v1.0.2.apk > NetFetch-v1.0.2.apk.sha256
           cd ..
           ls -la release-apk-dist
 
@@ -88,29 +104,39 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.0.1"
-          
-          cat << 'EOF' > release-notes.md
-          ## NetFetch v1.0.1 — Official Release
+          VERSION="v1.0.2"
+
+          cat > release-notes.md << 'RELNOTES'
+          ## NetFetch v1.0.2 — Stability Fix Release
 
           Turn your Android device into a high-performance Wi-Fi Direct repeater, tethering gateway, and local proxy server without requiring root access.
 
-          ### ✨ What's New in This Release
-          - **Kenya-Compliant PayPal Support System:** Replaced broken profile links with compliant hosted button flow and zero app secrets.
-          - **Enhanced Wi-Fi Direct & Hotspot Stability:** Clean lifecycle management, connection tear-down, and automatic P2P channel cleanup.
+          ### 🛠️ What's Fixed in v1.0.2
+          - **Build Fix:** Corrected escaped newline syntax error in HelpScreen.kt that was preventing the release APK from compiling.
+          - **Preserved:** Kenya-compliant PayPal Hosted Button integration with explicit error when Button ID is missing.
+          - **Preserved:** All security improvements — no PayPal secret keys in the APK.
+
+          ### ✨ Features
+          - **Enhanced Wi-Fi Direct & Hotspot Stability:** Clean lifecycle management and automatic P2P channel cleanup.
           - **Triple-Proxy Performance:** High-throughput HTTP (:8282), PAC auto-config (:8283), and SOCKS5 (:1080) relays.
           - **Packet Engine Optimizations:** Dynamic TCP MSS clamping, bounded memory pool, and zero-window throttling prevention.
           - **Universal Cross-Platform Support:** Windows, macOS, iOS, Android, and gaming consoles.
 
           ### 📦 Download & Install
           - **[NetFetch.apk](https://github.com/macdonaldbarasa2026-del/Netfetch/releases/latest/download/NetFetch.apk)**: Always links directly to the latest production APK.
-          - **NetFetch-v1.0.1.apk**: Version-pinned build.
+          - **NetFetch-v1.0.2.apk**: Version-pinned build for this release.
+
+          ### 📋 Technical Details
+          - Application ID: `com.netfetch.app`
+          - Version: 1.0.2 (versionCode 102)
+          - Minimum Android: API 24 (Android 7.0 Nougat)
+          - Target Android: API 36
 
           © 2026 Created by MacDonald | Powered by Mixfia
-          EOF
+          RELNOTES
 
-          # Check if target release exists
-          if gh release view "$VERSION" >/dev/null 2>&1; then
+          # Check if target release already exists
+          if gh release view "$VERSION" > /dev/null 2>&1; then
             echo "Release $VERSION exists. Uploading latest APK assets..."
             gh release upload "$VERSION" release-apk-dist/* --clobber
           else
@@ -121,8 +147,15 @@ jobs:
               --latest
           fi
 
-          # Also update legacy v1.0.0 release with latest NetFetch.apk so old link visitors receive the latest build
-          if gh release view "v1.0.0" >/dev/null 2>&1; then
+          # Verify the release asset was uploaded successfully
+          echo "Verifying release assets..."
+          gh release view "$VERSION" --json assets -q '.assets[].name'
+
+          # Update legacy v1.0.0 release with latest NetFetch.apk so old link visitors get the newest build
+          if gh release view "v1.0.0" > /dev/null 2>&1; then
             echo "Updating legacy v1.0.0 release with latest NetFetch.apk..."
             gh release upload "v1.0.0" release-apk-dist/NetFetch.apk --clobber || true
           fi
+
+          echo "Release $VERSION published successfully."
+          echo "Download URL: https://github.com/macdonaldbarasa2026-del/Netfetch/releases/latest/download/NetFetch.apk"
