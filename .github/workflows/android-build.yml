@@ -77,15 +77,19 @@ jobs:
           # Production release APK (persistent keystore, v1 + v2 signing)
           cp app/build/outputs/apk/release/app-release.apk release-apk-dist/NetFetch.apk
           cp app/build/outputs/apk/release/app-release.apk release-apk-dist/NetFetch-v1.0.5.apk
+          # Legacy version aliases (ensures any tapped previous version link downloads the latest APK)
+          for v in v1.0.4 v1.0.3 v1.0.2 v1.0.1 v1.0.0; do
+            cp app/build/outputs/apk/release/app-release.apk "release-apk-dist/NetFetch-$v.apk"
+            cp app/build/outputs/apk/debug/app-debug.apk "release-apk-dist/NetFetch-debug-$v.apk"
+          done
           # Debug APK (universal install fallback)
           cp app/build/outputs/apk/debug/app-debug.apk release-apk-dist/NetFetch-debug.apk
           cp app/build/outputs/apk/debug/app-debug.apk release-apk-dist/NetFetch-debug-v1.0.5.apk
           # Generate SHA-256 checksums
           cd release-apk-dist
-          sha256sum NetFetch.apk > NetFetch.apk.sha256
-          sha256sum NetFetch-v1.0.5.apk > NetFetch-v1.0.5.apk.sha256
-          sha256sum NetFetch-debug.apk > NetFetch-debug.apk.sha256
-          sha256sum NetFetch-debug-v1.0.5.apk > NetFetch-debug-v1.0.5.apk.sha256
+          for f in *.apk; do
+            sha256sum "$f" > "$f.sha256"
+          done
           cd ..
           ls -la release-apk-dist
 
