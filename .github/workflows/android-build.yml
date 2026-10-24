@@ -76,16 +76,16 @@ jobs:
           mkdir -p release-apk-dist
           # Production release APK (persistent keystore, v1 + v2 signing)
           cp app/build/outputs/apk/release/app-release.apk release-apk-dist/NetFetch.apk
-          cp app/build/outputs/apk/release/app-release.apk release-apk-dist/NetFetch-v1.0.4.apk
+          cp app/build/outputs/apk/release/app-release.apk release-apk-dist/NetFetch-v1.0.5.apk
           # Debug APK (universal install fallback)
           cp app/build/outputs/apk/debug/app-debug.apk release-apk-dist/NetFetch-debug.apk
-          cp app/build/outputs/apk/debug/app-debug.apk release-apk-dist/NetFetch-debug-v1.0.4.apk
+          cp app/build/outputs/apk/debug/app-debug.apk release-apk-dist/NetFetch-debug-v1.0.5.apk
           # Generate SHA-256 checksums
           cd release-apk-dist
           sha256sum NetFetch.apk > NetFetch.apk.sha256
-          sha256sum NetFetch-v1.0.4.apk > NetFetch-v1.0.4.apk.sha256
+          sha256sum NetFetch-v1.0.5.apk > NetFetch-v1.0.5.apk.sha256
           sha256sum NetFetch-debug.apk > NetFetch-debug.apk.sha256
-          sha256sum NetFetch-debug-v1.0.4.apk > NetFetch-debug-v1.0.4.apk.sha256
+          sha256sum NetFetch-debug-v1.0.5.apk > NetFetch-debug-v1.0.5.apk.sha256
           cd ..
           ls -la release-apk-dist
 
@@ -112,28 +112,26 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.0.4"
+          VERSION="v1.0.5"
 
           cat > release-notes.md << 'RELNOTES'
-          ## NetFetch v1.0.4 — Universal Android Compatibility & Verified Release
+          ## NetFetch v1.0.5 — Verified PayPal NCP Checkout Integration
 
           Turn your Android device into a high-performance Wi-Fi Direct repeater, tethering gateway, and local proxy server without requiring root access.
 
-          ### 🔧 What's Fixed in v1.0.4 (Compatibility & Installation)
-          - **Universal Installation Fixed:** Restored v1 (JAR) and v2 APK signatures so package installers on all Android versions can parse and install NetFetch without "App not installed" errors.
-          - **Consistent Release Keystore:** Fixed signature mismatch between updates; newer releases can now be installed directly over older versions.
-          - **Broad Target SDK (Android 15 / API 35):** Aligned target and compile SDK to API 35 (Android 15), providing full compatibility from Android 7.0 (API 24) through Android 15.
-          - **Dual Package Distribution:** Providing both optimized production Release APK and direct Debug APK for testing.
-          - **Verified PayPal Hosted Button:** Verified live integration (`SVSVDRDVSPU9L`) for developer support donations.
+          ### 💎 What's New in v1.0.5
+          - **Streamlined PayPal NCP Payment Flow:** Replaced the previous complex payment structure and backend with direct, verified PayPal No-Code Payment checkout (`https://www.paypal.com/ncp/payment/SVSVDRDVSPU9L`).
+          - **One-Tap Support:** Clean, native in-app appreciation card with instant browser launch into PayPal's secure checkout.
+          - **Lightweight & Secure:** Clean client-only architecture with zero secrets in the APK and no server backend dependencies.
 
           ### 📦 Download & Install
           - **[NetFetch.apk (Production Release)](https://github.com/macdonaldbarasa2026-del/Netfetch/releases/latest/download/NetFetch.apk)**: Optimized, signed release APK.
           - **[NetFetch-debug.apk (Debug Build)](https://github.com/macdonaldbarasa2026-del/Netfetch/releases/latest/download/NetFetch-debug.apk)**: Unminified debug APK with maximum sideloading compatibility.
-          - **NetFetch-v1.0.4.apk**: Version-pinned build for this release.
+          - **NetFetch-v1.0.5.apk**: Version-pinned build for this release.
 
           ### 📋 Technical Details
           - Application ID: `com.netfetch.app`
-          - Version: 1.0.4 (versionCode 104)
+          - Version: 1.0.5 (versionCode 105)
           - Minimum Android: API 24 (Android 7.0 Nougat)
           - Target Android: API 35 (Android 15)
           - Signing: Dual v1 + v2 signing enabled
