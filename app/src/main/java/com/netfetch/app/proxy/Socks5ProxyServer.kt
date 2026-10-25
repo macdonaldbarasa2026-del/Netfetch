@@ -637,6 +637,7 @@ class Socks5ProxyServer(
                 lastUp = currUp
                 lastDown = currDown
 
+                var clientsChanged = false
                 for ((ip, client) in connectedClientsMap) {
                     val up = clientUploadBytes[ip]?.get() ?: 0L
                     val down = clientDownloadBytes[ip]?.get() ?: 0L
@@ -645,18 +646,14 @@ class Socks5ProxyServer(
                             bytesUploaded = up,
                             bytesDownloaded = down
                         )
+                        clientsChanged = true
                     }
                 }
 
                 onBandwidthUpdate(upSpeed, downSpeed, currUp, currDown)
-                com.netfetch.app.network.NetfetchDiagnostics.recordThroughput(
-                    upSpeed = upSpeed,
-                    downSpeed = downSpeed,
-                    totalUp = currUp,
-                    totalDown = currDown,
-                    clientCount = connectedClientsMap.size
-                )
-                onClientActivity(HashMap(connectedClientsMap))
+                if (clientsChanged) {
+                    onClientActivity(HashMap(connectedClientsMap))
+                }
             }
         }
     }

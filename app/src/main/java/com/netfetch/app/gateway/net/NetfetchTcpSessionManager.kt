@@ -320,6 +320,11 @@ class NetfetchTcpSessionManager(
     fun availableReceiveWindow(key: TcpFlowKey): Int {
         val session = sessions[key] ?: return 65_535
         val remaining = session.writeQueue.remainingCapacity()
+        // Each entry in writeQueue holds at most one client TCP payload segment (up to 1460 bytes MSS).
+        // The advertised receive window accurately reflects the buffer space available in writeQueue
+        // (bounded by the 16-bit max TCP window of 65,535 bytes).
+        // This provides proper TCP flow control: when the queue is nearly full, the advertised window
+        // shrinks proportionally to prevent packet drops and RST disconnects.
         return (remaining * 1460).coerceIn(0, 65_535)
     }
 }

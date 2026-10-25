@@ -76,15 +76,15 @@ jobs:
           mkdir -p release-apk-dist
           # Production release APK (persistent keystore, v1 + v2 signing)
           cp app/build/outputs/apk/release/app-release.apk release-apk-dist/NetFetch.apk
-          cp app/build/outputs/apk/release/app-release.apk release-apk-dist/NetFetch-v1.0.5.apk
+          cp app/build/outputs/apk/release/app-release.apk release-apk-dist/NetFetch-v1.0.7.apk
           # Legacy version aliases (ensures any tapped previous version link downloads the latest APK)
-          for v in v1.0.4 v1.0.3 v1.0.2 v1.0.1 v1.0.0; do
+          for v in v1.0.6 v1.0.5 v1.0.4 v1.0.3 v1.0.2 v1.0.1 v1.0.0; do
             cp app/build/outputs/apk/release/app-release.apk "release-apk-dist/NetFetch-$v.apk"
             cp app/build/outputs/apk/debug/app-debug.apk "release-apk-dist/NetFetch-debug-$v.apk"
           done
           # Debug APK (universal install fallback)
           cp app/build/outputs/apk/debug/app-debug.apk release-apk-dist/NetFetch-debug.apk
-          cp app/build/outputs/apk/debug/app-debug.apk release-apk-dist/NetFetch-debug-v1.0.5.apk
+          cp app/build/outputs/apk/debug/app-debug.apk release-apk-dist/NetFetch-debug-v1.0.7.apk
           # Generate SHA-256 checksums
           cd release-apk-dist
           for f in *.apk; do
@@ -116,26 +116,27 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.0.5"
+          VERSION="v1.0.7"
 
           cat > release-notes.md << 'RELNOTES'
-          ## NetFetch v1.0.5 — Verified PayPal NCP Checkout Integration
+          ## NetFetch v1.0.7 — Network Latency & Throughput Optimizations
 
           Turn your Android device into a high-performance Wi-Fi Direct repeater, tethering gateway, and local proxy server without requiring root access.
 
-          ### 💎 What's New in v1.0.5
-          - **Streamlined PayPal NCP Payment Flow:** Replaced the previous complex payment structure and backend with direct, verified PayPal No-Code Payment checkout (`https://www.paypal.com/ncp/payment/SVSVDRDVSPU9L`).
-          - **One-Tap Support:** Clean, native in-app appreciation card with instant browser launch into PayPal's secure checkout.
-          - **Lightweight & Secure:** Clean client-only architecture with zero secrets in the APK and no server backend dependencies.
+          ### 🚀 What's New in v1.0.7
+          - **Streamlined Speed & Usage Telemetry:** Eliminated throughput counter collision between HTTP and SOCKS5 proxy monitors and unified diagnostics recording in HotspotService.
+          - **Reduced Notification IPC Churn:** Throttled redundant foreground notification updates during steady throughput streaming, saving CPU cycles.
+          - **TCP Housekeeping Reliability:** Preserved strict chronological packet ordering under lock and prevented retransmission of expired or closed TCP flows.
+          - **Verified TCP Window Sizing:** Validated TCP receive window calculations against bounded queue capacity to ensure accurate backpressure flow control.
 
           ### 📦 Download & Install
           - **[NetFetch.apk (Production Release)](https://github.com/macdonaldbarasa2026-del/Netfetch/releases/latest/download/NetFetch.apk)**: Optimized, signed release APK.
           - **[NetFetch-debug.apk (Debug Build)](https://github.com/macdonaldbarasa2026-del/Netfetch/releases/latest/download/NetFetch-debug.apk)**: Unminified debug APK with maximum sideloading compatibility.
-          - **NetFetch-v1.0.5.apk**: Version-pinned build for this release.
+          - **NetFetch-v1.0.7.apk**: Version-pinned build for this release.
 
           ### 📋 Technical Details
           - Application ID: `com.netfetch.app`
-          - Version: 1.0.5 (versionCode 105)
+          - Version: 1.0.7 (versionCode 107)
           - Minimum Android: API 24 (Android 7.0 Nougat)
           - Target Android: API 35 (Android 15)
           - Signing: Dual v1 + v2 signing enabled

@@ -778,25 +778,20 @@ class NetfetchTcpEngine(
                     return@forEach
                 }
 
-                val iterator =
-                    flow.unacknowledged.iterator()
-
-                while (iterator.hasNext()) {
-                    val segment = iterator.next()
-
-                    if (
-                        now - segment.lastSentAt >=
-                        RETRANSMIT_TIMEOUT_MS
-                    ) {
-                        writer(segment.packet)
-                        segment.lastSentAt = now
-                    }
-                }
-
                 val isHalfClosed = flow.clientFinReceived || flow.serverFinSent
                 val maxIdle = if (isHalfClosed) HALF_CLOSED_TIMEOUT_MS else IDLE_TIMEOUT_MS
                 if (now - flow.lastActivityAt >= maxIdle) {
                     closeLocked(flow.key)
+                    return@forEach
+                }
+
+                val iterator = flow.unacknowledged.iterator()
+                while (iterator.hasNext()) {
+                    val segment = iterator.next()
+                    if (now - segment.lastSentAt >= RETRANSMIT_TIMEOUT_MS) {
+                        writer(segment.packet)
+                        segment.lastSentAt = now
+                    }
                 }
             }
         }

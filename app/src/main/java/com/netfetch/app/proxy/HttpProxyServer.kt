@@ -724,6 +724,7 @@ class HttpProxyServer(
                 lastUp = currUp
                 lastDown = currDown
 
+                var clientsChanged = false
                 // Snapshot per-client byte counters into the client map once per second.
                 for ((ip, client) in connectedClientsMap) {
                     val up = clientUploadBytes[ip]?.get() ?: 0L
@@ -733,18 +734,14 @@ class HttpProxyServer(
                             bytesUploaded = up,
                             bytesDownloaded = down
                         )
+                        clientsChanged = true
                     }
                 }
 
                 onBandwidthUpdate(upSpeed, downSpeed, currUp, currDown)
-                com.netfetch.app.network.NetfetchDiagnostics.recordThroughput(
-                    upSpeed = upSpeed,
-                    downSpeed = downSpeed,
-                    totalUp = currUp,
-                    totalDown = currDown,
-                    clientCount = connectedClientsMap.size
-                )
-                notifyClientsChanged()
+                if (clientsChanged) {
+                    notifyClientsChanged()
+                }
             }
         }
     }

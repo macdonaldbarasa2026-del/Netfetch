@@ -110,6 +110,7 @@ class HotspotService : Service() {
     private var currentGateway = "192.168.49.1"
     private var currentUpstreamState = UpstreamNetworkManager.UpstreamState()
     private var internetVerified = false
+    private var lastNotificationText: String? = null
 
     private fun recalculateBandwidth() {
         currentUpSpeed = httpUpSpeed + socksUpSpeed
@@ -578,6 +579,10 @@ class HotspotService : Service() {
             val internetStr = if (internetVerified) "✓ Internet" else "No Internet"
             "[$modeStr | $internetStr] Shared: $sharedFormatted | Clients: $count | ↓${downSpeedKb}KB/s ↑${upSpeedKb}KB/s"
         }
+        if (text == lastNotificationText) {
+            return
+        }
+        lastNotificationText = text
         val notification = buildNotification("NetFetch Active (${currentConfig.ssid})", text)
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.notify(NOTIF_ID, notification)
