@@ -58,6 +58,10 @@ class HttpProxyServer(
     private val clientUploadBytes = ConcurrentHashMap<String, AtomicLong>()
     private val clientDownloadBytes = ConcurrentHashMap<String, AtomicLong>()
     private val clientConnectionCounts = ConcurrentHashMap<String, AtomicLong>()
+    private val activeUpstreamSockets =
+        java.util.concurrent.ConcurrentHashMap.newKeySet<Socket>()
+    private val upstreamSocketLock = Any()
+    private var upstreamSocketGeneration = 0L
 
     private val totalUploadCounter = AtomicLong(0L)
     private val totalDownloadCounter = AtomicLong(0L)
@@ -325,6 +329,7 @@ class HttpProxyServer(
     }
 
     private fun openUpstreamSocket(host: String, port: Int): Socket {
+        val generation = currentUpstreamSocketGeneration()
         val upstream = upstreamNetworkProvider()
             ?: com.netfetch.app.network.NetfetchUpstreamRuntime.fallbackNetwork()
 
@@ -349,6 +354,7 @@ class HttpProxyServer(
 
         // Attempt 1: Try via selected upstream network
         for (address in addresses) {
+            ensureUpstreamSocketGeneration(generation)
             var socket: Socket? = null
             try {
                 socket = if (upstream != null) {
@@ -385,6 +391,7 @@ class HttpProxyServer(
                     "Connected through upstream: $host/$address:$port in ${elapsed}ms"
                 )
 
+                trackUpstreamSocket(socket, generation)
                 return socket
             } catch (e: Exception) {
                 lastError = e
@@ -398,6 +405,7 @@ class HttpProxyServer(
 
         // Attempt 2: If upstream-bound socket failed, fall back to direct default routing
         for (address in addresses) {
+            ensureUpstreamSocketGeneration(generation)
             var directSocket: Socket? = null
             try {
                 directSocket = Socket()
@@ -414,6 +422,7 @@ class HttpProxyServer(
                     TAG,
                     "Connected via direct default routing fallback: $host/$address:$port"
                 )
+                trackUpstreamSocket(directSocket, generation)
                 return directSocket
             } catch (e: Exception) {
                 lastError = e
@@ -435,8 +444,10 @@ class HttpProxyServer(
         host: String,
         port: Int
     ) {
+        var trackedSocket: Socket? = null
         try {
             val targetSocket = openUpstreamSocket(host, port)
+            trackedSocket = targetSocket
 
             // Set idle inactivity timeout: 60s of silence cleanly reclaims connection slots
             targetSocket.soTimeout = TUNNEL_IDLE_TIMEOUT_MS
@@ -471,7 +482,6 @@ class HttpProxyServer(
                     }
                     // Close sockets to unblock the remaining pipe.
                     runCatching { clientSocket.close() }
-                    runCatching { targetSocket.close() }
                     // Wait for the other direction to drain.
                     j1.join()
                     j2.join()
@@ -480,7 +490,7 @@ class HttpProxyServer(
                 // Normal: IO exception when sockets are closed.
             } finally {
                 runCatching { clientSocket.close() }
-                runCatching { targetSocket.close() }
+                closeTrackedUpstreamSocket(targetSocket)
             }
 
         } catch (e: Exception) {
@@ -490,6 +500,8 @@ class HttpProxyServer(
                 clientOut.write(errResponse.toByteArray(Charsets.ISO_8859_1))
                 clientOut.flush()
             } catch (_: Exception) {}
+        } finally {
+            trackedSocket?.let(::closeTrackedUpstreamSocket)
         }
     }
 
@@ -502,6 +514,7 @@ class HttpProxyServer(
         targetUrl: String,
         headerLines: List<String>
     ) {
+        var trackedSocket: Socket? = null
         try {
             var host = ""
             var port = 80
@@ -541,6 +554,7 @@ class HttpProxyServer(
             }
 
             val targetSocket = openUpstreamSocket(host, port)
+            trackedSocket = targetSocket
 
             // Set idle inactivity timeout: 60s of silence cleanly reclaims connection slots
             targetSocket.soTimeout = TUNNEL_IDLE_TIMEOUT_MS
@@ -606,7 +620,6 @@ class HttpProxyServer(
                         j2.onJoin {}
                     }
                     runCatching { clientSocket.close() }
-                    runCatching { targetSocket.close() }
                     j1.join()
                     j2.join()
                 }
@@ -614,7 +627,7 @@ class HttpProxyServer(
                 // Normal: IO exception when sockets are closed.
             } finally {
                 runCatching { clientSocket.close() }
-                runCatching { targetSocket.close() }
+                closeTrackedUpstreamSocket(targetSocket)
             }
 
         } catch (e: Exception) {
@@ -624,6 +637,8 @@ class HttpProxyServer(
                 clientOut.write(errResponse.toByteArray(Charsets.ISO_8859_1))
                 clientOut.flush()
             } catch (_: Exception) {}
+        } finally {
+            trackedSocket?.let(::closeTrackedUpstreamSocket)
         }
     }
 
@@ -645,6 +660,38 @@ class HttpProxyServer(
         }
     }
 
+    fun closeActiveUpstreamConnections() {
+        val sockets = synchronized(upstreamSocketLock) {
+            upstreamSocketGeneration++
+            activeUpstreamSockets.toList().also { activeUpstreamSockets.clear() }
+        }
+        sockets.forEach { runCatching { it.close() } }
+    }
+
+    private fun currentUpstreamSocketGeneration(): Long =
+        synchronized(upstreamSocketLock) { upstreamSocketGeneration }
+
+    private fun ensureUpstreamSocketGeneration(generation: Long) {
+        if (currentUpstreamSocketGeneration() != generation) {
+            throw java.io.IOException("Upstream network changed while connecting")
+        }
+    }
+
+    private fun trackUpstreamSocket(socket: Socket, generation: Long) {
+        val tracked = synchronized(upstreamSocketLock) {
+            generation == upstreamSocketGeneration && activeUpstreamSockets.add(socket)
+        }
+        if (!tracked) {
+            runCatching { socket.close() }
+            throw java.io.IOException("Upstream network changed while connecting")
+        }
+    }
+
+    private fun closeTrackedUpstreamSocket(socket: Socket) {
+        synchronized(upstreamSocketLock) { activeUpstreamSockets.remove(socket) }
+        runCatching { socket.close() }
+    }
+
     private fun trackClientConnection(clientIp: String) {
         val now = System.currentTimeMillis()
         clientUploadBytes.putIfAbsent(clientIp, AtomicLong(0L))
@@ -658,6 +705,7 @@ class HttpProxyServer(
                     connectedTimestamp = now
                 )
         }
+
         clientConnectionCounts.computeIfAbsent(clientIp) { AtomicLong() }.incrementAndGet()
         notifyClientsChanged()
     }
@@ -749,6 +797,7 @@ class HttpProxyServer(
     fun stop() {
         isRunning = false
         speedMonitorJob?.cancel()
+        closeActiveUpstreamConnections()
         try {
             serverSocket?.close()
         } catch (e: Exception) {

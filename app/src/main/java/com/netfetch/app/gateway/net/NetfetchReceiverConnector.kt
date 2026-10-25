@@ -6,6 +6,8 @@ import java.io.IOException
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.Socket
+import java.net.InetSocketAddress
+import java.nio.channels.SocketChannel
 
 /**
  * Receiver-side connector.
@@ -20,9 +22,53 @@ class NetfetchReceiverConnector(
     private val providerPort: Int,
     private val username: String,
     private val password: String
-) : NetfetchConnector {
+) : NetfetchSelectableConnector {
 
     private val socksClient = NetfetchSocks5Client(vpnService)
+
+    override fun openTcpChannel(): SocketChannel {
+        val channel = SocketChannel.open()
+        try {
+            val socket = channel.socket()
+            if (!vpnService.protect(socket)) {
+                throw IOException("Unable to protect NetFetch provider channel")
+            }
+            socket.tcpNoDelay = true
+            socket.keepAlive = true
+            channel.configureBlocking(false)
+            return channel
+        } catch (error: Exception) {
+            runCatching { channel.close() }
+            if (error is IOException) throw error
+            throw IOException("Unable to prepare NetFetch provider channel", error)
+        }
+    }
+
+    override fun tcpConnectAddress(
+        destination: InetAddress,
+        port: Int
+    ): InetSocketAddress {
+        if (providerHost.isBlank() || providerPort !in 1..65535) {
+            throw IOException("Invalid NetFetch provider SOCKS endpoint")
+        }
+        val destinationHost = destination.hostAddress
+            ?: throw IOException("Invalid destination address")
+        val isDirect = destinationHost == providerHost || destinationHost == "127.0.0.1"
+        val host = if (isDirect) destination else InetAddress.getByName(providerHost)
+        return InetSocketAddress(host, if (isDirect) port else providerPort)
+    }
+
+    override fun createTcpHandshake(
+        destination: InetAddress,
+        port: Int
+    ): NetfetchTcpChannelHandshake? {
+        val destinationHost = destination.hostAddress
+            ?: throw IOException("Invalid destination address")
+        if (destinationHost == providerHost || destinationHost == "127.0.0.1") {
+            return null
+        }
+        return socksClient.channelHandshake(username, password, destination, port)
+    }
 
     override fun connectTcp(
         destination: InetAddress,

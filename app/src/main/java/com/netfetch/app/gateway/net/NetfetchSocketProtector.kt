@@ -5,6 +5,8 @@ import android.net.VpnService
 import java.net.DatagramSocket
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.nio.channels.SocketChannel
+import java.nio.channels.DatagramChannel
 
 /**
  * Opens upstream sockets on the selected Android Network and prevents
@@ -45,6 +47,30 @@ class NetfetchSocketProtector(
         }
     }
 
+    fun openTcpChannel(): SocketChannel {
+        val network = networkProvider()
+            ?: throw java.io.IOException("No upstream network is available")
+        val channel = SocketChannel.open()
+
+        try {
+            channel.configureBlocking(false)
+            val socket = channel.socket()
+            network.bindSocket(socket)
+            if (!vpnService.protect(socket)) {
+                throw java.io.IOException("Unable to protect upstream TCP channel")
+            }
+            socket.tcpNoDelay = true
+            socket.keepAlive = true
+            return channel
+        } catch (e: Exception) {
+            runCatching { channel.close() }
+            if (e is java.io.IOException) {
+                throw e
+            }
+            throw java.io.IOException("Failed to prepare upstream TCP channel", e)
+        }
+    }
+
     fun openUdpSocket(): DatagramSocket {
         val network = networkProvider()
             ?: throw java.io.IOException("No upstream network is available")
@@ -78,6 +104,29 @@ class NetfetchSocketProtector(
                 "Failed to prepare upstream UDP socket",
                 e
             )
+        }
+    }
+
+    fun openUdpChannel(): DatagramChannel {
+        val network = networkProvider()
+            ?: throw java.io.IOException("No upstream network is available")
+        val channel = DatagramChannel.open()
+        try {
+            channel.configureBlocking(false)
+            val socket = channel.socket()
+            socket.reuseAddress = true
+            socket.bind(InetSocketAddress(0))
+            network.bindSocket(socket)
+            if (!vpnService.protect(socket)) {
+                throw java.io.IOException("Unable to protect upstream UDP channel")
+            }
+            return channel
+        } catch (e: Exception) {
+            runCatching { channel.close() }
+            if (e is java.io.IOException) {
+                throw e
+            }
+            throw java.io.IOException("Failed to prepare upstream UDP channel", e)
         }
     }
 }

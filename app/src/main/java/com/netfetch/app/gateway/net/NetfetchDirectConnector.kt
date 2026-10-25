@@ -4,10 +4,17 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.nio.channels.SocketChannel
 
 class NetfetchDirectConnector(
     private val socketProtector: NetfetchSocketProtector
-) : NetfetchConnector {
+) : NetfetchSelectableConnector, NetfetchSelectableUdpConnector {
+
+    override fun openTcpChannel(): SocketChannel =
+        socketProtector.openTcpChannel()
+
+    override fun openUdpChannel(): java.nio.channels.DatagramChannel =
+        socketProtector.openUdpChannel()
 
     override fun connectTcp(
         destination: InetAddress,

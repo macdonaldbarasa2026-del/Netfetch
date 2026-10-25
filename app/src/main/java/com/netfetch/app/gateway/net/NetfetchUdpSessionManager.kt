@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.net.DatagramPacket
 import java.net.InetAddress
@@ -21,7 +22,7 @@ import java.util.concurrent.ArrayBlockingQueue
  */
 class NetfetchUdpSessionManager(
     private val connector: NetfetchConnector
-) {
+) : NetfetchUdpSessionTransport {
 
     private data class Session(
         val key: UdpFlowKey,
@@ -41,7 +42,7 @@ class NetfetchUdpSessionManager(
         private const val MAX_SESSIONS = 512
     }
 
-    fun open(
+    override fun open(
         key: UdpFlowKey,
         destination: InetAddress,
         destinationPort: Int,
@@ -69,8 +70,11 @@ class NetfetchUdpSessionManager(
             val outgoing = ArrayBlockingQueue<ByteArray>(64)
             val writerJob = scope.launch {
                 try {
-                    while (!socket.isClosed) {
-                        val data = outgoing.take()
+                    while (isActive && !socket.isClosed) {
+                        val data = outgoing.poll(
+                            100L,
+                            java.util.concurrent.TimeUnit.MILLISECONDS
+                        ) ?: continue
                         socket.send(DatagramPacket(data, data.size))
                     }
                 } catch (_: Exception) {
@@ -129,7 +133,7 @@ class NetfetchUdpSessionManager(
         }
     }
 
-    fun send(
+    override fun send(
         key: UdpFlowKey,
         data: ByteArray
     ): Boolean {
@@ -140,7 +144,7 @@ class NetfetchUdpSessionManager(
         return session.outgoing.offer(data)
     }
 
-    fun close(key: UdpFlowKey) {
+    override fun close(key: UdpFlowKey) {
         val session = sessions.remove(key) ?: return
 
         session.readerJob.cancel()
@@ -149,10 +153,14 @@ class NetfetchUdpSessionManager(
         runCatching { session.socket.close() }
     }
 
-    fun closeAll() {
-        sessions.keys.toList().forEach(::close)
+    override fun closeAll() {
+        closeSessions()
         scope.cancel()
     }
 
-    fun count(): Int = sessions.size
+    override fun closeSessions() {
+        sessions.keys.toList().forEach(::close)
+    }
+
+    override fun count(): Int = sessions.size
 }

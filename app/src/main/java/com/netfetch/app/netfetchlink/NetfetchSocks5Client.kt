@@ -1,6 +1,8 @@
 package com.netfetch.app.netfetchlink
 
 import android.net.VpnService
+import com.netfetch.app.gateway.net.NetfetchTcpChannelHandshake
+import java.net.InetAddress
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -8,6 +10,19 @@ import java.net.Socket
 class NetfetchSocks5Client(
     private val vpnService: VpnService
 ) {
+
+    fun channelHandshake(
+        username: String,
+        password: String,
+        destination: InetAddress,
+        destinationPort: Int
+    ): NetfetchTcpChannelHandshake =
+        NetfetchSocks5ChannelHandshake(
+            username,
+            password,
+            destination,
+            destinationPort
+        )
 
     companion object {
         private const val VERSION = 5

@@ -153,8 +153,13 @@ class VpnGatewayService : VpnService() {
 
             upstreamMonitorJob?.cancel()
             upstreamMonitorJob = serviceScope.launch {
+                var previousNetwork = currentNetwork
                 NetfetchUpstreamRuntime.state()?.collect { state ->
                     val network = state.network
+                    if (network != previousNetwork) {
+                        previousNetwork = network
+                        tunEngine?.resetForUpstreamChange()
+                    }
                     if (network != null) {
                         setUnderlyingNetworks(arrayOf(network))
                         Log.i(
@@ -224,6 +229,7 @@ class VpnGatewayService : VpnService() {
 
         upstreamMonitorJob?.cancel()
         upstreamMonitorJob = null
+        tunEngine?.resetForUpstreamChange()
 
         runCatching {
             setUnderlyingNetworks(null)

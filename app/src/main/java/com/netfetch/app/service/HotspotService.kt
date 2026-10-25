@@ -208,7 +208,13 @@ class HotspotService : Service() {
         // Monitor upstream state changes
         upstreamMonitorJob?.cancel()
         upstreamMonitorJob = serviceScope.launch {
+            var previousNetwork = upstreamNetworkManager?.currentNetwork
             upstreamNetworkManager?.upstreamState?.collect { upstream ->
+                if (upstream.network != previousNetwork) {
+                    previousNetwork = upstream.network
+                    proxyServer?.closeActiveUpstreamConnections()
+                    socks5Server?.closeActiveUpstreamConnections()
+                }
                 currentUpstreamState = upstream
                 Log.i(TAG, "Upstream state: ${upstream.displayName}")
                 updateActiveState()

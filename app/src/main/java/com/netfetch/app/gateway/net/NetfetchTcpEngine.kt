@@ -82,8 +82,21 @@ class NetfetchTcpEngine(
 
     private val flows = ConcurrentHashMap<TcpFlowKey, Flow>()
 
-    private val sessions =
-        NetfetchTcpSessionManager(connector)
+    private val sessions: NetfetchTcpSessionTransport =
+        if (connector is NetfetchSelectableConnector) {
+            try {
+                NetfetchSelectorTcpSessionManager(connector)
+            } catch (error: java.io.IOException) {
+                android.util.Log.e(
+                    "NetfetchTcpEngine",
+                    "Unable to start selector transport; using worker transport",
+                    error
+                )
+                NetfetchTcpSessionManager(connector)
+            }
+        } else {
+            NetfetchTcpSessionManager(connector)
+        }
 
     private val scheduler: ScheduledExecutorService =
         Executors.newSingleThreadScheduledExecutor { runnable ->
@@ -333,6 +346,12 @@ class NetfetchTcpEngine(
                         sessionKey
                     )
                 }
+            },
+
+            onWriteQueueAvailable = { sessionKey ->
+                synchronized(this) {
+                    flows[sessionKey]?.let(::sendAckLocked)
+                }
             }
         )
     }
@@ -401,22 +420,27 @@ class NetfetchTcpEngine(
             return
         }
 
-        val accepted =
+        val result =
             sessions.write(
                 flow.key,
                 payload
             )
 
-        if (!accepted) {
-            sendRst(
-                key = flow.key,
-                sequence = flow.nextServerSequence,
-                acknowledgement =
-                    sequence + payload.size
-            )
-
-            closeLocked(flow.key)
-            return
+        when (result) {
+            NetfetchTcpSessionManager.WriteResult.ACCEPTED -> Unit
+            NetfetchTcpSessionManager.WriteResult.QUEUE_FULL -> {
+                sendAckLocked(flow)
+                return
+            }
+            NetfetchTcpSessionManager.WriteResult.NO_SESSION -> {
+                sendRst(
+                    key = flow.key,
+                    sequence = flow.nextServerSequence,
+                    acknowledgement = sequence + payload.size
+                )
+                closeLocked(flow.key)
+                return
+            }
         }
 
         flow.nextClientSequence += payload.size
@@ -838,6 +862,21 @@ class NetfetchTcpEngine(
         synchronized(this) {
             flows.clear()
             sessions.closeAll()
+        }
+    }
+
+    fun resetForUpstreamChange() {
+        synchronized(this) {
+            flows.values.toList().forEach { flow ->
+                sendRst(
+                    key = flow.key,
+                    sequence = flow.nextServerSequence,
+                    acknowledgement = flow.nextClientSequence
+                )
+                flow.closed = true
+            }
+            flows.clear()
+            sessions.closeSessions()
         }
     }
 

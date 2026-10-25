@@ -6,14 +6,71 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import java.net.InetAddress
 import java.net.Socket
-import java.util.concurrent.ArrayBlockingQueue
+import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
+
+internal class BoundedTcpWriteQueue(
+    private val capacity: Int
+) {
+    data class Dequeued(
+        val data: ByteArray,
+        val wasFull: Boolean
+    )
+
+    private val lock = ReentrantLock()
+    private val notEmpty = lock.newCondition()
+    private val entries = ArrayDeque<ByteArray>()
+    private var closed = false
+
+    fun offer(data: ByteArray): Boolean = lock.withLock {
+        if (closed || entries.size == capacity) {
+            return false
+        }
+
+        entries.addLast(data)
+        notEmpty.signal()
+        true
+    }
+
+    @Throws(InterruptedException::class)
+    fun poll(timeoutMillis: Long): Dequeued? = lock.withLock {
+        var remainingNanos = TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
+        while (entries.isEmpty() && !closed && remainingNanos > 0L) {
+            remainingNanos = notEmpty.awaitNanos(remainingNanos)
+        }
+
+        if (entries.isEmpty()) {
+            return null
+        }
+
+        val wasFull = entries.size == capacity
+        Dequeued(entries.removeFirst(), wasFull)
+    }
+
+    fun remainingCapacity(): Int = lock.withLock {
+        capacity - entries.size
+    }
+
+    fun close() {
+        lock.withLock {
+            closed = true
+            entries.clear()
+            notEmpty.signalAll()
+        }
+    }
+}
 
 /**
  * Owns real upstream TCP sockets created for TUN flows.
@@ -26,7 +83,13 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class NetfetchTcpSessionManager(
     private val connector: NetfetchConnector
-) {
+) : NetfetchTcpSessionTransport {
+
+    enum class WriteResult {
+        ACCEPTED,
+        QUEUE_FULL,
+        NO_SESSION
+    }
 
     private companion object {
         const val WRITE_QUEUE_CAPACITY = 256
@@ -37,7 +100,7 @@ class NetfetchTcpSessionManager(
         val key: TcpFlowKey,
         val socket: Socket,
         val output: java.io.OutputStream,
-        val writeQueue: ArrayBlockingQueue<ByteArray>
+        val writeQueue: BoundedTcpWriteQueue
     ) {
         lateinit var readerJob: Job
         lateinit var writerJob: Job
@@ -85,79 +148,66 @@ class NetfetchTcpSessionManager(
      */
     private val connecting =
         ConcurrentHashMap<TcpFlowKey, Job>()
+    private val lifecycleLock = Any()
 
-    fun open(
+    override fun open(
         key: TcpFlowKey,
         destination: InetAddress,
         destinationPort: Int,
         onConnected: (TcpFlowKey) -> Unit,
         onConnectFailed: (TcpFlowKey) -> Unit,
         onData: (TcpFlowKey, ByteArray) -> Unit,
-        onClosed: (TcpFlowKey) -> Unit
+        onClosed: (TcpFlowKey) -> Unit,
+        onWriteQueueAvailable: (TcpFlowKey) -> Unit = {}
     ): Boolean {
-
-        if (sessions.containsKey(key)) {
-            onConnected(key)
-            return true
-        }
-
-        if (connecting.containsKey(key)) {
-            return true
-        }
 
         // Register the connecting marker before this coroutine can run. A
         // retransmitted SYN must observe it instead of starting a duplicate
         // outbound connection.
         val job = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             var socket: Socket? = null
+            var session: Session? = null
+            val currentJob = currentCoroutineContext()[Job]
             try {
                 /*
                  * This is the critical change:
                  * connector.connectTcp() now runs on Dispatchers.IO,
                  * never inside NetfetchTcpEngine's synchronized section.
                  */
-                socket = connector.connectTcp(
+                val activeSocket = connector.connectTcp(
                     destination = destination,
                     port = destinationPort
                 )
-                val activeSocket = socket
+                socket = activeSocket
+                currentCoroutineContext().ensureActive()
 
                 activeSocket.receiveBufferSize = SOCKET_BUFFER_SIZE
                 activeSocket.sendBufferSize = SOCKET_BUFFER_SIZE
                 activeSocket.keepAlive = true
 
                 runCatching {
-                    socket.tcpNoDelay = true
+                    activeSocket.tcpNoDelay = true
                 }
 
-                val output = socket.getOutputStream()
-
-                val queue =
-                    ArrayBlockingQueue<ByteArray>(
-                        WRITE_QUEUE_CAPACITY
-                    )
-
-                val session = Session(
+                val output = activeSocket.getOutputStream()
+                val writeQueue = BoundedTcpWriteQueue(WRITE_QUEUE_CAPACITY)
+                val newSession = Session(
                     key = key,
-                    socket = socket,
+                    socket = activeSocket,
                     output = output,
-                    writeQueue = queue
+                    writeQueue = writeQueue
                 )
+                session = newSession
 
-                val existing = sessions.putIfAbsent(key, session)
-                if (existing != null) {
-                    runCatching { socket.close() }
-                    return@launch
-                }
-
-                connecting.remove(key)
-
-                session.writerJob = scope.launch {
+                newSession.writerJob = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
                     try {
-                        while (!socket.isClosed) {
-                            val data = queue.take()
-                            output.write(data)
-                            if (queue.isEmpty()) {
+                        while (isActive && !activeSocket.isClosed) {
+                            val dequeued = writeQueue.poll(100L) ?: continue
+                            output.write(dequeued.data)
+                            if (dequeued.wasFull) {
+                                onWriteQueueAvailable(key)
+                            }
+                            if (writeQueue.remainingCapacity() == WRITE_QUEUE_CAPACITY) {
                                 output.flush()
                             }
                         }
@@ -168,14 +218,13 @@ class NetfetchTcpSessionManager(
                     }
                 }
 
-                session.readerJob = scope.launch {
+                newSession.readerJob = scope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
                     val buffer = ByteArray(64 * 1024)
 
                     try {
-                        val input =
-                            socket.getInputStream()
+                        val input = activeSocket.getInputStream()
 
-                        while (!socket.isClosed) {
+                        while (!activeSocket.isClosed) {
                             val count = input.read(buffer)
 
                             if (count < 0) {
@@ -186,115 +235,139 @@ class NetfetchTcpSessionManager(
                                 continue
                             }
 
-                            onData(
-                                key,
-                                buffer.copyOf(count)
-                            )
+                            onData(key, buffer.copyOf(count))
                         }
                     } catch (_: Exception) {
                         /*
                          * Session termination is handled below.
                          */
                     } finally {
-                        sessions.remove(key, session)
-                        connecting.remove(key)
-
-                        session.writerJob.cancel()
-
-                        runCatching {
-                            socket.close()
+                        synchronized(lifecycleLock) {
+                            sessions.remove(key, newSession)
                         }
-
+                        newSession.writeQueue.close()
+                        newSession.writerJob.cancel()
+                        runCatching { activeSocket.close() }
                         onClosed(key)
                     }
                 }
+
+                val published = synchronized(lifecycleLock) {
+                    if (
+                        currentJob?.isActive == true &&
+                        connecting[key] === currentJob &&
+                        sessions.putIfAbsent(key, newSession) == null
+                    ) {
+                        connecting.remove(key, currentJob)
+                        true
+                    } else {
+                        false
+                    }
+                }
+                if (!published) {
+                    newSession.writeQueue.close()
+                    newSession.readerJob.cancel()
+                    newSession.writerJob.cancel()
+                    runCatching { activeSocket.close() }
+                    return@launch
+                }
+
+                newSession.writerJob.start()
+                newSession.readerJob.start()
 
                 // Publish the SYN-ACK only once both workers exist; an early
                 // client payload can then never race a partially-built session.
                 onConnected(key)
 
             } catch (_: Exception) {
-                sessions.remove(key)
-                connecting.remove(key)
+                val removed = synchronized(lifecycleLock) {
+                    val removedConnecting = currentJob != null &&
+                        connecting.remove(key, currentJob)
+                    val removedSession = session?.let { sessions.remove(key, it) } == true
+                    session?.writeQueue?.close()
+                    removedConnecting || removedSession
+                }
+                session?.readerJob?.cancel()
+                session?.writerJob?.cancel()
                 runCatching { socket?.close() }
-                onConnectFailed(key)
+                if (removed && currentJob?.isActive == true) {
+                    onConnectFailed(key)
+                }
             }
         }
 
-        val existing =
-            connecting.putIfAbsent(
-                key,
-                job
-            )
-
-        if (existing != null) {
+        val registration = synchronized(lifecycleLock) {
+            when {
+                sessions.containsKey(key) -> 1
+                connecting.containsKey(key) -> 2
+                else -> {
+                    connecting[key] = job
+                    0
+                }
+            }
+        }
+        if (registration != 0) {
             job.cancel()
+            if (registration == 1) {
+                onConnected(key)
+            }
             return true
         }
 
         try {
             job.start()
         } catch (_: java.util.concurrent.RejectedExecutionException) {
-            connecting.remove(key)
-            onConnectFailed(key)
+            val removed = synchronized(lifecycleLock) {
+                connecting.remove(key, job)
+            }
+            if (removed) {
+                onConnectFailed(key)
+            }
             return false
         }
 
         return true
     }
 
-    fun write(
+    override fun write(
         key: TcpFlowKey,
         data: ByteArray
-    ): Boolean {
-        val session =
-            sessions[key]
-                ?: return false
+    ): WriteResult {
+        val session = sessions[key] ?: return WriteResult.NO_SESSION
 
         /*
          * Pure non-blocking offer:
          * Never block while holding NetfetchTcpEngine's synchronized lock.
-         * If the upstream write queue is full, return false immediately so
-         * backpressure can be handled without stalling other flows.
+         * A full queue is backpressure, not a reason to discard the session.
          */
         val accepted = session.writeQueue.offer(data)
-        if (!accepted) {
-            close(key)
-            return false
+        if (accepted) {
+            return WriteResult.ACCEPTED
         }
-
-        return true
+        return if (sessions[key] === session) {
+            WriteResult.QUEUE_FULL
+        } else {
+            WriteResult.NO_SESSION
+        }
     }
 
-    fun close(
+    override fun close(
         key: TcpFlowKey
     ) {
-        connecting.remove(key)?.cancel()
-
-        val session =
-            sessions.remove(key)
-                ?: return
-
-        session.readerJob.cancel()
-        session.writerJob.cancel()
-
-        session.writeQueue.clear()
-
-        runCatching {
-            session.socket.close()
+        val (connectingJob, session) = synchronized(lifecycleLock) {
+            val job = connecting.remove(key)
+            val removedSession = sessions.remove(key)
+            removedSession?.writeQueue?.close()
+            job to removedSession
         }
+        connectingJob?.cancel()
+        session?.readerJob?.cancel()
+        session?.writerJob?.cancel()
+        session?.let { runCatching { it.socket.close() } }
     }
 
-    fun closeAll() {
-        connecting.values
-            .toList()
-            .forEach { it.cancel() }
-
-        connecting.clear()
-
-        sessions.keys
-            .toList()
-            .forEach(::close)
+    override fun closeAll() {
+        closeSessions()
 
         // Cancel and join children before cancelling root scope and shutting down executor
         val rootJob = scope.coroutineContext[Job]
@@ -311,13 +384,30 @@ class NetfetchTcpSessionManager(
         runCatching { sessionExecutor.shutdownNow() }
     }
 
-    fun count(): Int =
+    override fun closeSessions() {
+        val (jobs, retiredSessions) = synchronized(lifecycleLock) {
+            val connectingJobs = connecting.values.toList()
+            val currentSessions = sessions.values.toList()
+            connecting.clear()
+            sessions.clear()
+            currentSessions.forEach { it.writeQueue.close() }
+            connectingJobs to currentSessions
+        }
+        jobs.forEach { it.cancel() }
+        retiredSessions.forEach { session ->
+            session.readerJob.cancel()
+            session.writerJob.cancel()
+            runCatching { session.socket.close() }
+        }
+    }
+
+    override fun count(): Int =
         sessions.size
 
-    fun isConnecting(key: TcpFlowKey): Boolean =
+    override fun isConnecting(key: TcpFlowKey): Boolean =
         connecting.containsKey(key)
 
-    fun availableReceiveWindow(key: TcpFlowKey): Int {
+    override fun availableReceiveWindow(key: TcpFlowKey): Int {
         val session = sessions[key] ?: return 65_535
         val remaining = session.writeQueue.remainingCapacity()
         // Each entry in writeQueue holds at most one client TCP payload segment (up to 1460 bytes MSS).

@@ -20,6 +20,7 @@ class NetfetchTunEngine(
 ) {
 
     private val running = AtomicBoolean(false)
+    private val stopped = AtomicBoolean(false)
 
     private var readerThread: Thread? = null
     private var writerThread: Thread? = null
@@ -56,7 +57,9 @@ class NetfetchTunEngine(
             java.util.concurrent.ThreadPoolExecutor.AbortPolicy()
         )
 
+    @Synchronized
     fun start() {
+        if (stopped.get()) return
         if (!running.compareAndSet(false, true)) {
             return
         }
@@ -272,10 +275,15 @@ class NetfetchTunEngine(
     fun udpSessionCount(): Int =
         udpEngine.count()
 
+    fun resetForUpstreamChange() {
+        tcpEngine.resetForUpstreamChange()
+        udpEngine.resetForUpstreamChange()
+    }
+
+    @Synchronized
     fun stop() {
-        if (!running.compareAndSet(true, false)) {
-            return
-        }
+        if (!stopped.compareAndSet(false, true)) return
+        running.set(false)
 
         tcpEngine.shutdown()
         udpEngine.closeAll()

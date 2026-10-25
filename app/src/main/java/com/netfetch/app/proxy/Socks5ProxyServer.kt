@@ -60,6 +60,10 @@ class Socks5ProxyServer(
     private val clientUploadBytes = ConcurrentHashMap<String, AtomicLong>()
     private val clientDownloadBytes = ConcurrentHashMap<String, AtomicLong>()
     private val clientConnectionCounts = ConcurrentHashMap<String, AtomicLong>()
+    private val activeUpstreamSockets =
+        java.util.concurrent.ConcurrentHashMap.newKeySet<Socket>()
+    private val upstreamSocketLock = Any()
+    private var upstreamSocketGeneration = 0L
     private val totalUploadCounter = AtomicLong(0L)
     private val totalDownloadCounter = AtomicLong(0L)
     private var speedMonitorJob: Job? = null
@@ -365,6 +369,7 @@ class Socks5ProxyServer(
     }
 
     private fun openUpstreamSocket(host: String, port: Int): Socket {
+        val generation = currentUpstreamSocketGeneration()
         val upstream = upstreamNetworkProvider()
             ?: com.netfetch.app.network.NetfetchUpstreamRuntime.fallbackNetwork()
 
@@ -389,6 +394,7 @@ class Socks5ProxyServer(
 
         // Attempt 1: Try via selected upstream network
         for (address in addresses) {
+            ensureUpstreamSocketGeneration(generation)
             var socket: Socket? = null
 
             try {
@@ -426,6 +432,7 @@ class Socks5ProxyServer(
                     "Connected through upstream: $host/$address:$port in ${elapsed}ms"
                 )
 
+                trackUpstreamSocket(socket, generation)
                 return socket
             } catch (e: Exception) {
                 lastError = e
@@ -439,6 +446,7 @@ class Socks5ProxyServer(
 
         // Attempt 2: If upstream socket failed, fall back to direct default routing
         for (address in addresses) {
+            ensureUpstreamSocketGeneration(generation)
             var directSocket: Socket? = null
             try {
                 directSocket = Socket()
@@ -455,6 +463,7 @@ class Socks5ProxyServer(
                     TAG,
                     "SOCKS connected via direct default routing fallback: $host/$address:$port"
                 )
+                trackUpstreamSocket(directSocket, generation)
                 return directSocket
             } catch (e: Exception) {
                 lastError = e
@@ -476,8 +485,10 @@ class Socks5ProxyServer(
         host: String,
         port: Int
     ) {
+        var trackedSocket: Socket? = null
         try {
             val targetSocket = openUpstreamSocket(host, port)
+            trackedSocket = targetSocket
             // Set idle inactivity timeout: 60s of silence cleanly reclaims connection slots
             targetSocket.soTimeout = TUNNEL_IDLE_TIMEOUT_MS
             clientSocket.soTimeout = TUNNEL_IDLE_TIMEOUT_MS
@@ -541,7 +552,7 @@ class Socks5ProxyServer(
                 }
 
                 try {
-                    targetSocket.close()
+                    closeTrackedUpstreamSocket(targetSocket)
                 } catch (_: Exception) {
                 }
 
@@ -559,6 +570,8 @@ class Socks5ProxyServer(
         } catch (e: Exception) {
             Log.d(TAG, "SOCKS5 CONNECT failed to $host:$port: ${e.message}")
             sendReply(clientOut, REP_GENERAL_FAILURE, ATYP_IPV4, ByteArray(4), 0)
+        } finally {
+            trackedSocket?.let(::closeTrackedUpstreamSocket)
         }
     }
 
@@ -587,6 +600,7 @@ class Socks5ProxyServer(
                     if (input.available() == 0) {
                         output.flush()
                     }
+
                     val amount = read.toLong()
 
                     if (isUpload) {
@@ -600,6 +614,38 @@ class Socks5ProxyServer(
                 output.flush()
             } catch (_: Exception) {}
         }
+    }
+
+    fun closeActiveUpstreamConnections() {
+        val sockets = synchronized(upstreamSocketLock) {
+            upstreamSocketGeneration++
+            activeUpstreamSockets.toList().also { activeUpstreamSockets.clear() }
+        }
+        sockets.forEach { runCatching { it.close() } }
+    }
+
+    private fun currentUpstreamSocketGeneration(): Long =
+        synchronized(upstreamSocketLock) { upstreamSocketGeneration }
+
+    private fun ensureUpstreamSocketGeneration(generation: Long) {
+        if (currentUpstreamSocketGeneration() != generation) {
+            throw java.io.IOException("Upstream network changed while connecting")
+        }
+    }
+
+    private fun trackUpstreamSocket(socket: Socket, generation: Long) {
+        val tracked = synchronized(upstreamSocketLock) {
+            generation == upstreamSocketGeneration && activeUpstreamSockets.add(socket)
+        }
+        if (!tracked) {
+            runCatching { socket.close() }
+            throw java.io.IOException("Upstream network changed while connecting")
+        }
+    }
+
+    private fun closeTrackedUpstreamSocket(socket: Socket) {
+        synchronized(upstreamSocketLock) { activeUpstreamSockets.remove(socket) }
+        runCatching { socket.close() }
     }
 
     private fun readFully(input: InputStream, buf: ByteArray) {
@@ -661,6 +707,7 @@ class Socks5ProxyServer(
     fun stop() {
         isRunning = false
         speedMonitorJob?.cancel()
+        closeActiveUpstreamConnections()
         try { serverSocket?.close() } catch (_: Exception) {}
         acceptThread?.interrupt()
         acceptThread = null

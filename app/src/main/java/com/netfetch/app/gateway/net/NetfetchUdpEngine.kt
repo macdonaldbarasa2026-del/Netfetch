@@ -15,8 +15,21 @@ class NetfetchUdpEngine(
     private val sessions =
         ConcurrentHashMap<UdpFlowKey, Boolean>()
 
-    private val manager =
-        NetfetchUdpSessionManager(connector)
+    private val manager: NetfetchUdpSessionTransport =
+        if (connector is NetfetchSelectableUdpConnector) {
+            try {
+                NetfetchSelectorUdpSessionManager(connector)
+            } catch (error: java.io.IOException) {
+                android.util.Log.e(
+                    "NetfetchUdpEngine",
+                    "Unable to start UDP selector transport; using worker transport",
+                    error
+                )
+                NetfetchUdpSessionManager(connector)
+            }
+        } else {
+            NetfetchUdpSessionManager(connector)
+        }
 
     companion object {
         private const val MAX_SESSIONS = 512
@@ -50,8 +63,9 @@ class NetfetchUdpEngine(
                 payloadOffset + payloadLength
             )
 
-        if (!sessions.containsKey(key)) {
-            if (sessions.size >= MAX_SESSIONS) {
+        if (sessions.putIfAbsent(key, true) == null) {
+            if (sessions.size > MAX_SESSIONS) {
+                sessions.remove(key)
                 return
             }
 
@@ -77,10 +91,9 @@ class NetfetchUdpEngine(
                 )
 
             if (!opened) {
+                sessions.remove(key)
                 return
             }
-
-            sessions[key] = true
         }
 
         if (payload.isNotEmpty()) {
@@ -115,6 +128,11 @@ class NetfetchUdpEngine(
     fun closeAll() {
         sessions.clear()
         manager.closeAll()
+    }
+
+    fun resetForUpstreamChange() {
+        sessions.clear()
+        manager.closeSessions()
     }
 
     fun count(): Int = sessions.size
