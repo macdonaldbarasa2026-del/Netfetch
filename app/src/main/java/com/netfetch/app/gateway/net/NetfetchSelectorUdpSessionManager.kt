@@ -167,7 +167,7 @@ class NetfetchSelectorUdpSessionManager(
             connecting?.cancelled?.set(true)
             val active = sessions.remove(key)
             active?.outgoing?.close()
-            pending to active
+            connecting to active
         }
         pending?.channel?.let { runCatching { it.close() } }
         session?.let {

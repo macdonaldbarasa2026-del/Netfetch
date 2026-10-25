@@ -158,7 +158,7 @@ class NetfetchTcpSessionManager(
         onConnectFailed: (TcpFlowKey) -> Unit,
         onData: (TcpFlowKey, ByteArray) -> Unit,
         onClosed: (TcpFlowKey) -> Unit,
-        onWriteQueueAvailable: (TcpFlowKey) -> Unit = {}
+        onWriteQueueAvailable: (TcpFlowKey) -> Unit
     ): Boolean {
 
         // Register the connecting marker before this coroutine can run. A
