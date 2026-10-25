@@ -81,7 +81,7 @@ jobs:
           "$APKSIGNER" verify "$APK_PATH"
 
           PACKAGE_INFO=$("$AAPT" dump badging "$APK_PATH" | sed -n '1p')
-          APP_ID=$(sed -n "s/.*name='\([^']*\)'.*/\1/p" <<< "$PACKAGE_INFO")
+          APP_ID=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<< "$PACKAGE_INFO")
           VERSION_CODE=$(sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" <<< "$PACKAGE_INFO")
           VERSION_NAME=$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<< "$PACKAGE_INFO")
           if [ "$APP_ID" != "com.netfetch.app" ] || [ -z "$VERSION_CODE" ] || [ -z "$VERSION_NAME" ]; then
