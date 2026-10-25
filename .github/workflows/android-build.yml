@@ -6,13 +6,21 @@ on:
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Publish a production release from a matching version tag"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
@@ -34,8 +42,6 @@ jobs:
 
       - name: Configure Android SDK
         run: |
-          # The ubuntu-latest runner already ships with Android SDK at $ANDROID_HOME.
-          # We configure Android API 35 (Android 15) for maximum broad compatibility across devices.
           echo "ANDROID_HOME=$ANDROID_HOME"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
@@ -56,44 +62,55 @@ jobs:
       - name: Build Release APK and AAB
         run: ./gradlew assembleRelease assembleDebug bundleRelease --no-daemon --stacktrace
 
-      - name: Verify APK exists and is valid
+      - name: Verify APK metadata and integrity
+        id: apk_metadata
         run: |
           APK_PATH="app/build/outputs/apk/release/app-release.apk"
           DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
+          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
+          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
           if [ ! -f "$APK_PATH" ]; then
             echo "ERROR: Release APK not found at $APK_PATH"
             find app/build/outputs -name "*.apk" 2>/dev/null
             exit 1
           fi
-          echo "Release APK found: $(ls -lh $APK_PATH)"
-          echo "Debug APK found: $(ls -lh $DEBUG_APK)"
-          file "$APK_PATH"
-          unzip -t "$APK_PATH" > /dev/null && echo "Release APK integrity check: PASSED" || (echo "APK is corrupt!" && exit 1)
-          unzip -t "$DEBUG_APK" > /dev/null && echo "Debug APK integrity check: PASSED" || (echo "Debug APK is corrupt!" && exit 1)
+          echo "Release APK found: $(ls -lh "$APK_PATH")"
+          echo "Debug APK found: $(ls -lh "$DEBUG_APK")"
+          unzip -t "$APK_PATH" > /dev/null
+          unzip -t "$DEBUG_APK" > /dev/null
+          "$APKSIGNER" verify "$APK_PATH"
 
-      - name: Prepare Release APK Packages
+          PACKAGE_INFO=$("$AAPT" dump badging "$APK_PATH" | sed -n '1p')
+          APP_ID=$(sed -n "s/.*name='\([^']*\)'.*/\1/p" <<< "$PACKAGE_INFO")
+          VERSION_CODE=$(sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" <<< "$PACKAGE_INFO")
+          VERSION_NAME=$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<< "$PACKAGE_INFO")
+          if [ "$APP_ID" != "com.netfetch.app" ] || [ -z "$VERSION_CODE" ] || [ -z "$VERSION_NAME" ]; then
+            echo "ERROR: Unexpected or missing APK metadata: $PACKAGE_INFO"
+            exit 1
+          fi
+          echo "Verified package=$APP_ID versionName=$VERSION_NAME versionCode=$VERSION_CODE"
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare versioned production APK
+        env:
+          VERSION_NAME: ${{ steps.apk_metadata.outputs.version_name }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
         run: |
+          if [ "$PUBLISH_RELEASE" = "true" ]; then
+            if [ "$GITHUB_REF_TYPE" != "tag" ] || [ "$GITHUB_REF_NAME" != "v$VERSION_NAME" ]; then
+              echo "ERROR: Production release requires tag v$VERSION_NAME; selected ref is $GITHUB_REF_NAME"
+              exit 1
+            fi
+          fi
+
           mkdir -p release-apk-dist
-          # Production release APK (persistent keystore, v1 + v2 signing)
-          cp app/build/outputs/apk/release/app-release.apk release-apk-dist/NetFetch.apk
-          cp app/build/outputs/apk/release/app-release.apk release-apk-dist/NetFetch-v1.0.7.apk
-          # Legacy version aliases (ensures any tapped previous version link downloads the latest APK)
-          for v in v1.0.6 v1.0.5 v1.0.4 v1.0.3 v1.0.2 v1.0.1 v1.0.0; do
-            cp app/build/outputs/apk/release/app-release.apk "release-apk-dist/NetFetch-$v.apk"
-            cp app/build/outputs/apk/debug/app-debug.apk "release-apk-dist/NetFetch-debug-$v.apk"
-          done
-          # Debug APK (universal install fallback)
-          cp app/build/outputs/apk/debug/app-debug.apk release-apk-dist/NetFetch-debug.apk
-          cp app/build/outputs/apk/debug/app-debug.apk release-apk-dist/NetFetch-debug-v1.0.7.apk
-          # Generate SHA-256 checksums
+          cp app/build/outputs/apk/release/app-release.apk "release-apk-dist/NetFetch-v$VERSION_NAME.apk"
           cd release-apk-dist
-          for f in *.apk; do
-            sha256sum "$f" > "$f.sha256"
-          done
+          sha256sum "NetFetch-v$VERSION_NAME.apk" > "NetFetch-v$VERSION_NAME.apk.sha256"
           cd ..
           ls -la release-apk-dist
 
-      - name: Upload Release APK Artifact
+      - name: Upload versioned production APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: NetFetch-release-apk
@@ -111,57 +128,55 @@ jobs:
           name: app-release-bundle
           path: app/build/outputs/bundle/release/app-release.aab
 
-      - name: Publish or Update GitHub Release with Latest APK
-        if: github.ref == 'refs/heads/main'
+  publish-release:
+    needs: build
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_release && startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout tags and main history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify release tag is part of main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Download APK built in this workflow run
+        uses: actions/download-artifact@v4
+        with:
+          name: NetFetch-release-apk
+          path: release-apk-dist
+
+      - name: Verify release package and create a new release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="v1.0.7"
+          TAG="$GITHUB_REF_NAME"
+          VERSION="${TAG#v}"
+          APK="release-apk-dist/NetFetch-$TAG.apk"
+          CHECKSUM="$APK.sha256"
 
-          cat > release-notes.md << 'RELNOTES'
-          ## NetFetch v1.0.7 — Network Latency & Throughput Optimizations
-
-          Turn your Android device into a high-performance Wi-Fi Direct repeater, tethering gateway, and local proxy server without requiring root access.
-
-          ### 🚀 What's New in v1.0.7
-          - **Streamlined Speed & Usage Telemetry:** Eliminated throughput counter collision between HTTP and SOCKS5 proxy monitors and unified diagnostics recording in HotspotService.
-          - **Reduced Notification IPC Churn:** Throttled redundant foreground notification updates during steady throughput streaming, saving CPU cycles.
-          - **TCP Housekeeping Reliability:** Preserved strict chronological packet ordering under lock and prevented retransmission of expired or closed TCP flows.
-          - **Verified TCP Window Sizing:** Validated TCP receive window calculations against bounded queue capacity to ensure accurate backpressure flow control.
-
-          ### 📦 Download & Install
-          - **[NetFetch.apk (Production Release)](https://github.com/macdonaldbarasa2026-del/Netfetch/releases/latest/download/NetFetch.apk)**: Optimized, signed release APK.
-          - **[NetFetch-debug.apk (Debug Build)](https://github.com/macdonaldbarasa2026-del/Netfetch/releases/latest/download/NetFetch-debug.apk)**: Unminified debug APK with maximum sideloading compatibility.
-          - **NetFetch-v1.0.7.apk**: Version-pinned build for this release.
-
-          ### 📋 Technical Details
-          - Application ID: `com.netfetch.app`
-          - Version: 1.0.7 (versionCode 107)
-          - Minimum Android: API 24 (Android 7.0 Nougat)
-          - Target Android: API 35 (Android 15)
-          - Signing: Dual v1 + v2 signing enabled
-
-          © 2026 Created by MacDonald | Powered by Mixfia
-          RELNOTES
-
-          if gh release view "$VERSION" > /dev/null 2>&1; then
-            echo "Release $VERSION exists. Uploading latest APK assets..."
-            gh release upload "$VERSION" release-apk-dist/* --clobber
-          else
-            echo "Creating release $VERSION with latest APK..."
-            gh release create "$VERSION" release-apk-dist/* \
-              --title "NetFetch $VERSION — Latest Official Release" \
-              --notes-file release-notes.md \
-              --latest
+          test "$TAG" = "v$VERSION"
+          test -f "$APK"
+          test -f "$CHECKSUM"
+          (cd release-apk-dist && sha256sum -c "NetFetch-$TAG.apk.sha256")
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "ERROR: Release $TAG already exists; refusing to replace or modify its assets."
+            exit 1
           fi
 
-          echo "Verifying release assets..."
-          gh release view "$VERSION" --json assets -q '.assets[].name'
+          gh release create "$TAG" "$APK" "$CHECKSUM" \
+            --verify-tag \
+            --title "NetFetch v$VERSION" \
+            --notes "Production APK for NetFetch v$VERSION. Package: com.netfetch.app." \
+            --latest
 
-          if gh release view "v1.0.0" > /dev/null 2>&1; then
-            echo "Updating legacy v1.0.0 release with latest NetFetch.apk..."
-            gh release upload "v1.0.0" release-apk-dist/NetFetch.apk --clobber || true
+          ASSETS=$(gh release view "$TAG" --json assets -q '.assets[].name' | sort)
+          EXPECTED=$(printf '%s\n' "NetFetch-$TAG.apk" "NetFetch-$TAG.apk.sha256" | sort)
+          if [ "$ASSETS" != "$EXPECTED" ]; then
+            echo "ERROR: Unexpected release asset list:"
+            printf '%s\n' "$ASSETS"
+            exit 1
           fi
-
-          echo "Release $VERSION published successfully."
-          echo "Direct download URL: https://github.com/macdonaldbarasa2026-del/Netfetch/releases/latest/download/NetFetch.apk"
