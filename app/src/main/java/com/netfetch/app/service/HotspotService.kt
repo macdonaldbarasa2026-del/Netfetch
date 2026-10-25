@@ -91,6 +91,14 @@ class HotspotService : Service() {
      */
     private val clientRegistry = NetfetchClientRegistry()
 
+    /**
+     * Session epoch: bumped every time a new proxy session starts.
+     * onBandwidthUpdate lambdas capture the epoch at construction time; any
+     * callback arriving from a previous session (stale epoch) is dropped,
+     * preventing speed/total stacking across restarts.
+     */
+    private val sessionEpoch = java.util.concurrent.atomic.AtomicLong(0L)
+
     private var httpUpSpeed = 0L
     private var httpDownSpeed = 0L
     private var httpTotalUp = 0L
@@ -200,6 +208,12 @@ class HotspotService : Service() {
 
         stopRunningStackForRestart()
 
+        // Capture the session epoch for this proxy session. Callbacks from a
+        // previous proxy instance that fires after stopRunningStackForRestart()
+        // will see a different epoch and will be silently dropped, preventing
+        // speed / total-usage stacking across hotspot restarts.
+        val epoch = sessionEpoch.get()
+
         // 1. Start upstream network detection
         upstreamNetworkManager?.let { NetfetchUpstreamRuntime.stop(it) }
         upstreamNetworkManager = NetfetchUpstreamRuntime.start(this)
@@ -235,11 +249,14 @@ class HotspotService : Service() {
                 updateActiveState()
             },
             onBandwidthUpdate = { upSpeed, downSpeed, totalUp, totalDown ->
-                httpUpSpeed = upSpeed
-                httpDownSpeed = downSpeed
-                httpTotalUp = totalUp
-                httpTotalDown = totalDown
-                recalculateBandwidth()
+                serviceScope.launch(Dispatchers.Main.immediate) {
+                    if (sessionEpoch.get() != epoch) return@launch
+                    httpUpSpeed = upSpeed
+                    httpDownSpeed = downSpeed
+                    httpTotalUp = totalUp
+                    httpTotalDown = totalDown
+                    recalculateBandwidth()
+                }
             }
         ).also { it.start() }
 
@@ -284,11 +301,14 @@ class HotspotService : Service() {
                 updateActiveState()
             },
             onBandwidthUpdate = { upSpeed, downSpeed, totalUp, totalDown ->
-                socksUpSpeed = upSpeed
-                socksDownSpeed = downSpeed
-                socksTotalUp = totalUp
-                socksTotalDown = totalDown
-                recalculateBandwidth()
+                serviceScope.launch(Dispatchers.Main.immediate) {
+                    if (sessionEpoch.get() != epoch) return@launch
+                    socksUpSpeed = upSpeed
+                    socksDownSpeed = downSpeed
+                    socksTotalUp = totalUp
+                    socksTotalDown = totalDown
+                    recalculateBandwidth()
+                }
             }
         ).also { it.start() }
 
@@ -390,6 +410,8 @@ class HotspotService : Service() {
     }
 
     private fun stopRunningStackForRestart() {
+        // Invalidate callbacks before stopping proxy scopes or resetting counters.
+        sessionEpoch.incrementAndGet()
         internetMonitorJob?.cancel()
         internetMonitorJob = null
 
@@ -472,6 +494,8 @@ class HotspotService : Service() {
     }
 
     fun stopHotspot() {
+        // Invalidate callbacks before stopping proxy scopes or resetting counters.
+        sessionEpoch.incrementAndGet()
         internetVerificationJob?.cancel()
         internetVerificationJob = null
 
